@@ -1,0 +1,24 @@
+{
+  "name": "Jeffrey's Language Learning App",
+  "short_name": "LexiVault",
+  "description": "Personal language learning vault with spaced repetition",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#F2F9F9",
+  "theme_color": "#0ABAB5",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
