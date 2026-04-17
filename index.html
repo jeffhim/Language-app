@@ -266,28 +266,40 @@ a{color:var(--accent);text-decoration:none}
 .lang-tab.active,.cat-chip.active{background:var(--accent);color:#fff;border-color:var(--accent);box-shadow:0 2px 8px rgba(10,186,181,0.2)}
 .cat-chip i{margin-right:3px;font-size:10px}
 
-/* Folder Grid */
-.folder-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px}
-.folder-card{
+/* Folder List */
+.folder-list{display:flex;flex-direction:column;gap:6px;margin-bottom:16px}
+.folder-row{
   background:var(--bg-2);border:2px solid var(--border-light);border-radius:var(--radius);
-  padding:16px 14px;cursor:pointer;transition:all .2s;text-align:center;
-  display:flex;flex-direction:column;align-items:center;gap:6px;
-  box-shadow:var(--card-shadow);position:relative;overflow:hidden;
+  padding:12px 14px;display:flex;align-items:center;gap:12px;
+  box-shadow:var(--card-shadow);transition:all .2s;position:relative;overflow:hidden;
 }
-.folder-card::before{
-  content:'';position:absolute;top:0;left:0;right:0;height:4px;
-  background:linear-gradient(90deg,var(--accent),var(--accent2));opacity:0;transition:opacity .2s;
+.folder-row::before{
+  content:'';position:absolute;top:0;left:0;bottom:0;width:4px;
+  background:linear-gradient(180deg,var(--accent),var(--accent2));opacity:0;transition:opacity .2s;
 }
-.folder-card:hover{border-color:var(--accent);transform:translateY(-2px);box-shadow:var(--elevated-shadow)}
-.folder-card:hover::before{opacity:1}
-.folder-card .folder-icon{font-size:32px;color:var(--accent);transition:transform .2s}
-.folder-card:hover .folder-icon{transform:scale(1.1)}
-.folder-card .folder-name{font-family:var(--font-head);font-weight:800;font-size:14px;color:var(--text-0);word-break:break-word}
-.folder-card .folder-count{font-size:11px;color:var(--text-2);font-weight:700}
-.folder-card.add-folder{border-style:dashed;border-color:var(--border);background:transparent}
-.folder-card.add-folder .folder-icon{color:var(--text-2)}
-.folder-card.add-folder:hover{border-color:var(--accent);background:var(--accent-glow)}
-.folder-card.add-folder:hover .folder-icon{color:var(--accent)}
+.folder-row:hover{border-color:var(--accent);box-shadow:var(--elevated-shadow)}
+.folder-row:hover::before{opacity:1}
+.folder-row .folder-icon{font-size:22px;color:var(--accent);flex-shrink:0;width:32px;text-align:center;transition:transform .2s}
+.folder-row:hover .folder-icon{transform:scale(1.1)}
+.folder-row .folder-info{flex:1;min-width:0;cursor:pointer}
+.folder-row .folder-name{font-family:var(--font-head);font-weight:800;font-size:15px;color:var(--text-0);word-break:break-word;line-height:1.3}
+.folder-row .folder-count{font-size:11px;color:var(--text-2);font-weight:700;margin-top:1px}
+.folder-row .folder-actions{display:flex;align-items:center;gap:2px;flex-shrink:0}
+.folder-row .folder-actions button{
+  width:30px;height:30px;border:none;border-radius:8px;background:transparent;
+  color:var(--text-2);cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-size:12px;transition:all .15s;
+}
+.folder-row .folder-actions button:hover{background:var(--bg-3);color:var(--text-0)}
+.folder-row .folder-actions button:active{transform:scale(0.9)}
+.folder-row .folder-actions button.move-up:hover,.folder-row .folder-actions button.move-down:hover{color:var(--accent)}
+.folder-row .folder-actions button.edit-btn:hover{color:var(--accent2)}
+.folder-row.add-folder{border-style:dashed;border-color:var(--border);background:transparent;cursor:pointer;justify-content:center;gap:8px;padding:14px}
+.folder-row.add-folder .folder-icon{color:var(--text-2)}
+.folder-row.add-folder:hover{border-color:var(--accent);background:var(--accent-glow)}
+.folder-row.add-folder:hover .folder-icon{color:var(--accent)}
+.folder-row.add-folder .add-label{font-size:14px;font-weight:700;color:var(--text-2)}
+.folder-row.add-folder:hover .add-label{color:var(--accent)}
 .folder-back{
   display:inline-flex;align-items:center;gap:6px;padding:6px 14px;
   border:none;border-radius:22px;background:var(--bg-2);border:2px solid var(--border);
@@ -860,18 +872,25 @@ function normalizeGrammar(g) {
   };
 }
 function getUsedCategories(lang) {
-  const s = new Set();
+  // Build ordered list: langCategories order first, then any extras from data
+  const ordered = [];
+  const seen = new Set();
+  // 1. Respect user-defined order from langCategories
+  if (lang && state.config.langCategories && state.config.langCategories[lang]) {
+    state.config.langCategories[lang].forEach(c => {
+      if (!seen.has(c)) { ordered.push(c); seen.add(c); }
+    });
+  }
+  // 2. Legacy shared categories
+  (state.config.categories||[]).forEach(c => {
+    if (!seen.has(c)) { ordered.push(c); seen.add(c); }
+  });
+  // 3. Any categories found in data but not in the arrays
   const vPool = lang ? state.vocabulary.filter(v => v.lang === lang) : state.vocabulary;
   const gPool = lang ? state.grammar.filter(g => g.lang === lang) : state.grammar;
-  vPool.forEach(v => { if(v.category) s.add(v.category); });
-  gPool.forEach(g => { if(g.category) s.add(g.category); });
-  // Include per-language empty folders the user created
-  if (lang && state.config.langCategories && state.config.langCategories[lang]) {
-    state.config.langCategories[lang].forEach(c => s.add(c));
-  }
-  // Legacy: also include old shared categories
-  (state.config.categories||[]).forEach(c => s.add(c));
-  return [...s].sort();
+  vPool.forEach(v => { if(v.category && !seen.has(v.category)) { ordered.push(v.category); seen.add(v.category); } });
+  gPool.forEach(g => { if(g.category && !seen.has(g.category)) { ordered.push(g.category); seen.add(g.category); } });
+  return ordered;
 }
 
 function updateSyncIndicator() {
@@ -1274,7 +1293,7 @@ function renderWords() {
   const folder = state.filter.openFolder;
 
   if (folder === null) {
-    // Show folder grid view
+    // Show folder list view
     const lang = state.filter.lang;
     const cats = getUsedCategories(lang);
     const uncatCount = state.vocabulary.filter(v => !v.category && v.lang === lang).length;
@@ -1283,23 +1302,35 @@ function renderWords() {
       <div class="section-head"><h2>Vocabulary</h2>
         <button class="btn btn-ghost btn-sm" onclick="showBatchAddModal()" title="Batch Add"><i class="fas fa-list-check"></i> Batch</button>
       </div>
-      <div class="folder-grid">
+      <div class="folder-list">
         ${cats.map((c,i) => {
           const count = state.vocabulary.filter(v => v.category === c && v.lang === lang).length;
-          return `<div class="folder-card stagger" style="animation-delay:${Math.min(i*0.04,0.4)}s" onclick="openFolder('${esc(c)}','words')">
+          const isFirst = i === 0;
+          const isLast = i === cats.length - 1;
+          return `<div class="folder-row stagger" style="animation-delay:${Math.min(i*0.03,0.4)}s">
             <div class="folder-icon"><i class="fas fa-folder"></i></div>
-            <div class="folder-name">${esc(c)}</div>
-            <div class="folder-count">${count} word${count!==1?'s':''}</div>
+            <div class="folder-info" onclick="openFolder('${esc(c)}','words')">
+              <div class="folder-name">${esc(c)}</div>
+              <div class="folder-count">${count} word${count!==1?'s':''}</div>
+            </div>
+            <div class="folder-actions">
+              <button class="move-up" title="Move up" onclick="moveFolder('${esc(c)}',-1,'words')" ${isFirst?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-up"></i></button>
+              <button class="move-down" title="Move down" onclick="moveFolder('${esc(c)}',1,'words')" ${isLast?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-down"></i></button>
+              <button class="edit-btn" title="Rename / Delete" onclick="showFolderOptionsPrompt('${esc(c)}','words')"><i class="fas fa-ellipsis-vertical"></i></button>
+            </div>
           </div>`;
         }).join('')}
-        ${uncatCount > 0 ? `<div class="folder-card stagger" style="animation-delay:${Math.min(cats.length*0.04,0.4)}s" onclick="openFolder('__uncat','words')">
-          <div class="folder-icon"><i class="fas fa-folder-open"></i></div>
-          <div class="folder-name">Unfiled</div>
-          <div class="folder-count">${uncatCount} word${uncatCount!==1?'s':''}</div>
+        ${uncatCount > 0 ? `<div class="folder-row stagger" style="animation-delay:${Math.min(cats.length*0.03,0.4)}s">
+          <div class="folder-icon"><i class="fas fa-folder-open" style="color:var(--text-2)"></i></div>
+          <div class="folder-info" onclick="openFolder('__uncat','words')">
+            <div class="folder-name">Unfiled</div>
+            <div class="folder-count">${uncatCount} word${uncatCount!==1?'s':''}</div>
+          </div>
+          <div class="folder-actions"></div>
         </div>` : ''}
-        <div class="folder-card add-folder stagger" style="animation-delay:${Math.min((cats.length+1)*0.04,0.4)}s" onclick="showCreateFolderPrompt('words')">
+        <div class="folder-row add-folder stagger" style="animation-delay:${Math.min((cats.length+1)*0.03,0.4)}s" onclick="showCreateFolderPrompt('words')">
           <div class="folder-icon"><i class="fas fa-folder-plus"></i></div>
-          <div class="folder-name">New Folder</div>
+          <div class="add-label">New Folder</div>
         </div>
       </div>
       ${cats.length === 0 && uncatCount === 0 ? '<div class="empty-state"><div class="empty-icon">📂</div><h3>No folders yet</h3><p>Create a folder and start adding words!</p></div>' : ''}
@@ -1415,6 +1446,160 @@ function showCreateFolderPrompt(view) {
   });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); inp.querySelector('#new-folder-ok').click(); } });
   inp.addEventListener('click', (e) => { if (e.target === inp) inp.remove(); });
+}
+
+/* ============================================================
+   FOLDER MANAGEMENT (Rename, Reorder, Delete)
+   ============================================================ */
+function moveFolder(name, direction, view) {
+  const lang = state.filter.lang;
+  if (!state.config.langCategories) state.config.langCategories = {};
+  if (!state.config.langCategories[lang]) state.config.langCategories[lang] = [];
+
+  // Ensure all used categories are in the langCategories array (preserves order)
+  const cats = getUsedCategories(lang);
+  const arr = state.config.langCategories[lang];
+  cats.forEach(c => { if (!arr.includes(c)) arr.push(c); });
+
+  const idx = arr.indexOf(name);
+  if (idx < 0) return;
+  const newIdx = idx + direction;
+  if (newIdx < 0 || newIdx >= arr.length) return;
+  // Swap
+  [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+  saveConfig();
+  if (view === 'words') renderWords();
+  else renderGrammar();
+}
+
+function showFolderOptionsPrompt(name, view) {
+  const el = document.createElement('div');
+  el.className = 'confirm-overlay';
+  el.innerHTML = `<div class="confirm-box" style="max-width:360px">
+    <p style="margin-bottom:14px;font-weight:800;font-size:17px;display:flex;align-items:center;gap:8px">
+      <i class="fas fa-folder" style="color:var(--accent)"></i> ${esc(name)}
+    </p>
+    <div class="form-group" style="margin-bottom:14px">
+      <label style="font-size:13px;font-weight:700;color:var(--text-1);margin-bottom:5px;display:block">Folder Name</label>
+      <input id="rename-folder-input" value="${esc(name)}" style="font-size:16px;width:100%;padding:10px 14px;border:2px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-0);color:var(--text-0);outline:none" placeholder="Enter folder name">
+    </div>
+    <div class="btns" style="display:flex;gap:8px">
+      <button class="btn btn-danger btn-sm" id="folder-delete-btn" style="flex:0 0 auto"><i class="fas fa-trash"></i></button>
+      <button class="btn btn-secondary" style="flex:1" onclick="this.closest('.confirm-overlay').remove()">Cancel</button>
+      <button class="btn btn-primary" style="flex:1" id="folder-rename-ok"><i class="fas fa-check"></i> Save</button>
+    </div>
+  </div>`;
+  document.body.appendChild(el);
+
+  const input = el.querySelector('#rename-folder-input');
+  setTimeout(() => { input.focus(); input.select(); }, 100);
+
+  el.querySelector('#folder-rename-ok').addEventListener('click', () => {
+    const newName = input.value.trim();
+    if (!newName) { showToast('Enter a folder name', 'error'); return; }
+    if (newName !== name) {
+      renameFolder(name, newName, view);
+    }
+    el.remove();
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); el.querySelector('#folder-rename-ok').click(); }
+  });
+
+  el.querySelector('#folder-delete-btn').addEventListener('click', () => {
+    el.remove();
+    showConfirm('Delete folder "' + name + '"? Items inside will become Unfiled.', () => {
+      deleteFolder(name, view);
+    });
+  });
+
+  el.addEventListener('click', (e) => { if (e.target === el) el.remove(); });
+}
+
+function renameFolder(oldName, newName, view) {
+  const lang = state.filter.lang;
+
+  // Update langCategories array
+  if (state.config.langCategories && state.config.langCategories[lang]) {
+    const arr = state.config.langCategories[lang];
+    const idx = arr.indexOf(oldName);
+    if (idx >= 0) arr[idx] = newName;
+  }
+  // Update legacy categories
+  if (state.config.categories) {
+    const idx = state.config.categories.indexOf(oldName);
+    if (idx >= 0) state.config.categories[idx] = newName;
+  }
+  saveConfig();
+
+  // Update all vocabulary items with this folder
+  let vocabChanged = false;
+  state.vocabulary.forEach(v => {
+    if (v.category === oldName && v.lang === lang) {
+      v.category = newName;
+      vocabChanged = true;
+      syncManager.push(() => api.update('Vocabulary', v.id, v), 'rename folder vocab');
+    }
+  });
+  if (vocabChanged) saveVocab();
+
+  // Update all grammar items with this folder
+  let gramChanged = false;
+  state.grammar.forEach(g => {
+    if (g.category === oldName && g.lang === lang) {
+      g.category = newName;
+      gramChanged = true;
+      syncManager.push(() => api.update('Grammar', g.id, g), 'rename folder grammar');
+    }
+  });
+  if (gramChanged) saveGrammar();
+
+  // If currently inside the renamed folder, update the open folder reference
+  if (state.filter.openFolder === oldName) state.filter.openFolder = newName;
+
+  showToast('Folder renamed to "' + newName + '"', 'success');
+  renderCurrentView();
+}
+
+function deleteFolder(name, view) {
+  const lang = state.filter.lang;
+
+  // Remove from langCategories
+  if (state.config.langCategories && state.config.langCategories[lang]) {
+    state.config.langCategories[lang] = state.config.langCategories[lang].filter(c => c !== name);
+  }
+  // Remove from legacy categories
+  if (state.config.categories) {
+    state.config.categories = state.config.categories.filter(c => c !== name);
+  }
+  saveConfig();
+
+  // Clear category on all items in this folder (make them Unfiled)
+  let vocabChanged = false;
+  state.vocabulary.forEach(v => {
+    if (v.category === name && v.lang === lang) {
+      v.category = '';
+      vocabChanged = true;
+      syncManager.push(() => api.update('Vocabulary', v.id, v), 'delete folder vocab');
+    }
+  });
+  if (vocabChanged) saveVocab();
+
+  let gramChanged = false;
+  state.grammar.forEach(g => {
+    if (g.category === name && g.lang === lang) {
+      g.category = '';
+      gramChanged = true;
+      syncManager.push(() => api.update('Grammar', g.id, g), 'delete folder grammar');
+    }
+  });
+  if (gramChanged) saveGrammar();
+
+  if (state.filter.openFolder === name) state.filter.openFolder = null;
+
+  showToast('Folder "' + name + '" deleted', 'info');
+  renderCurrentView();
 }
 
 const setSearch = debounce(val=>{ state.filter.search=val; renderWords(); }, 250);
@@ -1551,23 +1736,35 @@ function renderGrammar() {
 
     el.innerHTML = `
       <div class="section-head"><h2>Grammar</h2></div>
-      <div class="folder-grid">
+      <div class="folder-list">
         ${cats.map((c,i) => {
           const count = state.grammar.filter(g => g.category === c && g.lang === lang).length;
-          return `<div class="folder-card stagger" style="animation-delay:${Math.min(i*0.04,0.4)}s" onclick="openFolder('${esc(c)}','grammar')">
+          const isFirst = i === 0;
+          const isLast = i === cats.length - 1;
+          return `<div class="folder-row stagger" style="animation-delay:${Math.min(i*0.03,0.4)}s">
             <div class="folder-icon"><i class="fas fa-folder"></i></div>
-            <div class="folder-name">${esc(c)}</div>
-            <div class="folder-count">${count} rule${count!==1?'s':''}</div>
+            <div class="folder-info" onclick="openFolder('${esc(c)}','grammar')">
+              <div class="folder-name">${esc(c)}</div>
+              <div class="folder-count">${count} rule${count!==1?'s':''}</div>
+            </div>
+            <div class="folder-actions">
+              <button class="move-up" title="Move up" onclick="moveFolder('${esc(c)}',-1,'grammar')" ${isFirst?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-up"></i></button>
+              <button class="move-down" title="Move down" onclick="moveFolder('${esc(c)}',1,'grammar')" ${isLast?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-down"></i></button>
+              <button class="edit-btn" title="Rename / Delete" onclick="showFolderOptionsPrompt('${esc(c)}','grammar')"><i class="fas fa-ellipsis-vertical"></i></button>
+            </div>
           </div>`;
         }).join('')}
-        ${uncatCount > 0 ? `<div class="folder-card stagger" style="animation-delay:${Math.min(cats.length*0.04,0.4)}s" onclick="openFolder('__uncat','grammar')">
-          <div class="folder-icon"><i class="fas fa-folder-open"></i></div>
-          <div class="folder-name">Unfiled</div>
-          <div class="folder-count">${uncatCount} rule${uncatCount!==1?'s':''}</div>
+        ${uncatCount > 0 ? `<div class="folder-row stagger" style="animation-delay:${Math.min(cats.length*0.03,0.4)}s">
+          <div class="folder-icon"><i class="fas fa-folder-open" style="color:var(--text-2)"></i></div>
+          <div class="folder-info" onclick="openFolder('__uncat','grammar')">
+            <div class="folder-name">Unfiled</div>
+            <div class="folder-count">${uncatCount} rule${uncatCount!==1?'s':''}</div>
+          </div>
+          <div class="folder-actions"></div>
         </div>` : ''}
-        <div class="folder-card add-folder stagger" style="animation-delay:${Math.min((cats.length+1)*0.04,0.4)}s" onclick="showCreateFolderPrompt('grammar')">
+        <div class="folder-row add-folder stagger" style="animation-delay:${Math.min((cats.length+1)*0.03,0.4)}s" onclick="showCreateFolderPrompt('grammar')">
           <div class="folder-icon"><i class="fas fa-folder-plus"></i></div>
-          <div class="folder-name">New Folder</div>
+          <div class="add-label">New Folder</div>
         </div>
       </div>
       ${cats.length === 0 && uncatCount === 0 ? '<div class="empty-state"><div class="empty-icon">📂</div><h3>No folders yet</h3><p>Create a folder and start adding grammar!</p></div>' : ''}
