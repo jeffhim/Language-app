@@ -1,4 +1,4 @@
-const CACHE_NAME = 'lexivault-v2';
+const CACHE_NAME = 'lexivault-v3';
 const ASSETS = [
   './',
   './index.html',
