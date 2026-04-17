@@ -71,6 +71,25 @@ a{color:var(--accent);text-decoration:none}
 #header .actions .sync-spin{animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 
+/* Sync Status Indicator */
+.sync-indicator{
+  display:flex;align-items:center;gap:5px;padding:4px 12px;
+  border-radius:20px;font-size:11px;font-weight:700;transition:all .35s ease;
+  font-family:var(--font-body);white-space:nowrap;cursor:default;
+}
+.sync-indicator i{font-size:12px;transition:transform .2s}
+.sync-indicator.saving{color:var(--accent);background:var(--accent-glow)}
+.sync-indicator.saving i.fa-arrows-rotate{animation:spin 1s linear infinite}
+.sync-indicator.saved{color:var(--success);background:var(--success-bg)}
+.sync-indicator.error{color:var(--error);background:var(--error-bg)}
+.sync-indicator .retry-btn{
+  background:none;border:1.5px solid var(--error);color:var(--error);
+  padding:2px 8px;border-radius:12px;font-size:10px;font-weight:800;
+  cursor:pointer;font-family:var(--font-body);transition:all .2s;margin-left:2px;
+}
+.sync-indicator .retry-btn:hover{background:var(--error);color:#fff}
+.sync-indicator.hidden{opacity:0;pointer-events:none;width:0;padding:0;overflow:hidden}
+
 /* Language Bar (below header) */
 #langbar{
   height:var(--langbar-h);display:flex;align-items:center;gap:6px;
@@ -551,7 +570,7 @@ a{color:var(--accent);text-decoration:none}
   <div id="header">
     <div class="logo">Jeffrey's Language Learning App</div>
     <div class="actions">
-      <button id="btn-sync" title="Sync" onclick="syncData()"><i class="fas fa-cloud"></i></button>
+      <div class="sync-indicator hidden" id="sync-indicator"></div>
       <button title="Settings" onclick="navigate('settings')"><i class="fas fa-cog"></i></button>
     </div>
   </div>
@@ -641,7 +660,7 @@ const state = {
   vocabulary: [],
   grammar: [],
   config: {
-    sheetsUrl: '',
+    sheetsUrl: 'https://script.google.com/macros/s/AKfycbxQNbE_mCbJNWYL8nOMjxLes-6DSJcwJKCjOGatN2eyWEsl6eV0jvfmBgV8TUID5Pgjyw/exec',
     languages: ['ja','de'],
     categories: [], langCategories: {},
     aiEndpoint: '',
@@ -650,11 +669,14 @@ const state = {
   },
   quiz: { active:false, type:null, lang:null, items:[], idx:0, results:[], flipped:false },
   filter: { lang:'', search:'', category:'all', openFolder:null },
-  syncing: false,
 };
+
+const HARDCODED_SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxQNbE_mCbJNWYL8nOMjxLes-6DSJcwJKCjOGatN2eyWEsl6eV0jvfmBgV8TUID5Pgjyw/exec';
 
 function loadState() {
   state.config = storage.getJSON('lv_config', state.config);
+  // Always enforce the hardcoded sheets URL
+  state.config.sheetsUrl = HARDCODED_SHEETS_URL;
   state.vocabulary = storage.getJSON('lv_vocab', []);
   state.grammar = storage.getJSON('lv_grammar', []);
 }
@@ -699,24 +721,119 @@ const api = {
   init() { return this.req({action:'init'}); },
 };
 
-async function syncData() {
-  if (!state.config.sheetsUrl) { showToast('Set up Google Sheets in Settings first','info'); return; }
-  if (state.syncing) return;
-  state.syncing = true;
-  updateSyncIcon();
-  try {
-    const [vRes, gRes] = await Promise.all([api.read('Vocabulary'), api.read('Grammar')]);
-    if (vRes.data) { state.vocabulary = vRes.data.map(normalizeVocab); saveVocab(); }
-    if (gRes.data) { state.grammar = gRes.data.map(normalizeGrammar); saveGrammar(); }
-    showToast('Synced successfully!','success');
-    renderCurrentView();
-  } catch(e) {
-    showToast('Sync failed: ' + e.message,'error');
-  } finally {
-    state.syncing = false;
-    updateSyncIcon();
+/* ============================================================
+   SYNC MANAGER — Auto-sync with status indicator
+   ============================================================ */
+const syncManager = {
+  pending: 0,
+  failedOps: [],
+  currentState: 'idle', // 'idle' | 'saving' | 'saved' | 'error' | 'pulling'
+  savedTimer: null,
+
+  async push(operation, description) {
+    this.pending++;
+    this.setState('saving');
+    try {
+      await operation();
+      this.pending--;
+      if (this.pending === 0 && this.failedOps.length === 0) {
+        this.setState('saved');
+      }
+    } catch(e) {
+      this.pending--;
+      this.failedOps.push({ op: operation, desc: description || 'sync' });
+      this.setState('error');
+    }
+  },
+
+  async retry() {
+    if (this.failedOps.length === 0) return;
+    const ops = [...this.failedOps];
+    this.failedOps = [];
+    this.setState('saving');
+    for (const entry of ops) {
+      try {
+        await entry.op();
+      } catch(e) {
+        this.failedOps.push(entry);
+      }
+    }
+    if (this.failedOps.length > 0) {
+      this.setState('error');
+    } else if (this.pending === 0) {
+      this.setState('saved');
+    }
+  },
+
+  async pull() {
+    this.setState('pulling');
+    try {
+      // Ensure sheets are initialized with proper headers first
+      await api.init();
+      const [vRes, gRes] = await Promise.all([api.read('Vocabulary'), api.read('Grammar')]);
+      const remoteVocab = (vRes.data || []).map(normalizeVocab);
+      const remoteGrammar = (gRes.data || []).map(normalizeGrammar);
+      const localVocab = state.vocabulary;
+      const localGrammar = state.grammar;
+
+      if (remoteVocab.length === 0 && remoteGrammar.length === 0 && (localVocab.length > 0 || localGrammar.length > 0)) {
+        // Sheets are empty but we have local data → push everything up
+        this.setState('saving');
+        const pushOps = [];
+        localVocab.forEach(v => pushOps.push(api.add('Vocabulary', v)));
+        localGrammar.forEach(g => pushOps.push(api.add('Grammar', g)));
+        // Process in batches of 5 to avoid overwhelming the API
+        for (let i = 0; i < pushOps.length; i += 5) {
+          await Promise.all(pushOps.slice(i, i + 5));
+        }
+        this.setState('saved');
+      } else if (remoteVocab.length > 0 || remoteGrammar.length > 0) {
+        // Sheets have data → merge: use remote as source of truth, add any local-only items
+        const remoteVIds = new Set(remoteVocab.map(v => v.id));
+        const remoteGIds = new Set(remoteGrammar.map(g => g.id));
+        const localOnlyV = localVocab.filter(v => v.id && !remoteVIds.has(v.id));
+        const localOnlyG = localGrammar.filter(g => g.id && !remoteGIds.has(g.id));
+        // Push local-only items to sheets
+        if (localOnlyV.length > 0 || localOnlyG.length > 0) {
+          const pushOps = [];
+          localOnlyV.forEach(v => pushOps.push(api.add('Vocabulary', v)));
+          localOnlyG.forEach(g => pushOps.push(api.add('Grammar', g)));
+          for (let i = 0; i < pushOps.length; i += 5) {
+            await Promise.all(pushOps.slice(i, i + 5));
+          }
+        }
+        // Merge: remote data + local-only items
+        state.vocabulary = [...remoteVocab, ...localOnlyV];
+        state.grammar = [...remoteGrammar, ...localOnlyG];
+        saveVocab();
+        saveGrammar();
+        this.setState('saved');
+      } else {
+        // Both empty — nothing to do
+        this.setState('saved');
+      }
+      renderCurrentView();
+    } catch(e) {
+      this.failedOps.push({ op: () => this.pull(), desc: 'pull' });
+      this.setState('error');
+    }
+  },
+
+  setState(s) {
+    this.currentState = s;
+    if (this.savedTimer) { clearTimeout(this.savedTimer); this.savedTimer = null; }
+    updateSyncIndicator();
+    // Auto-hide "saved" after 4 seconds
+    if (s === 'saved') {
+      this.savedTimer = setTimeout(() => {
+        if (this.currentState === 'saved') {
+          this.currentState = 'idle';
+          updateSyncIndicator();
+        }
+      }, 4000);
+    }
   }
-}
+};
 
 function normalizeVocab(v) {
   return {
@@ -757,12 +874,29 @@ function getUsedCategories(lang) {
   return [...s].sort();
 }
 
-function updateSyncIcon() {
-  const btn = document.getElementById('btn-sync');
-  if (!btn) return;
-  const ico = btn.querySelector('i');
-  if (state.syncing) ico.classList.add('sync-spin');
-  else ico.classList.remove('sync-spin');
+function updateSyncIndicator() {
+  const el = document.getElementById('sync-indicator');
+  if (!el) return;
+  const s = syncManager.currentState;
+  el.className = 'sync-indicator ' + s;
+  switch(s) {
+    case 'saving':
+      el.innerHTML = '<i class="fas fa-arrows-rotate"></i><span>Saving...</span>';
+      break;
+    case 'pulling':
+      el.innerHTML = '<i class="fas fa-arrows-rotate"></i><span>Syncing...</span>';
+      break;
+    case 'saved':
+      el.innerHTML = '<i class="fas fa-circle-check"></i><span>Saved</span>';
+      break;
+    case 'error':
+      el.innerHTML = '<i class="fas fa-circle-exclamation"></i><span>Failed</span><button class="retry-btn" onclick="syncManager.retry()"><i class="fas fa-rotate-right"></i> Retry</button>';
+      break;
+    case 'idle': default:
+      el.className = 'sync-indicator hidden';
+      el.innerHTML = '';
+      break;
+  }
 }
 
 /* ============================================================
@@ -1002,9 +1136,6 @@ function renderDashboard() {
         </div>`;
       }).join('')}
     ` : `<div class="empty-state stagger" style="animation-delay:.12s"><div class="empty-icon">🌱</div><h3>Start learning!</h3><p>Add your first word or grammar point to begin.</p></div>`}
-    ${!state.config.sheetsUrl ? `<div class="card stagger" style="animation-delay:.25s;margin-top:16px">
-      <div style="display:flex;align-items:center;gap:10px"><i class="fas fa-cloud" style="color:var(--text-2);font-size:20px"></i><div><b style="font-size:14px">Cloud sync not set up</b><p style="font-size:12px;color:var(--text-2)">Go to Settings to connect Google Sheets</p></div></div>
-    </div>` : ''}
   `;
   // Attach dashboard search logic
   initDashSearch();
@@ -1346,8 +1477,7 @@ function handleAddWord(e) {
   closeModal();
   showToast('Word added!','success');
   renderCurrentView();
-  // Async cloud save
-  if(state.config.sheetsUrl) api.add('Vocabulary', data).catch(()=>{});
+  syncManager.push(() => api.add('Vocabulary', data), 'add word');
 }
 
 function showEditWordModal(id) {
@@ -1393,7 +1523,7 @@ function handleEditWord(e, id) {
   closeModal();
   showToast('Word updated','success');
   renderCurrentView();
-  if(state.config.sheetsUrl) api.update('Vocabulary', id, v).catch(()=>{});
+  syncManager.push(() => api.update('Vocabulary', id, v), 'update word');
 }
 
 function deleteWord(id) {
@@ -1403,7 +1533,7 @@ function deleteWord(id) {
     saveVocab();
     showToast('Word deleted','info');
     renderCurrentView();
-    if(state.config.sheetsUrl) api.del('Vocabulary', id).catch(()=>{});
+    syncManager.push(() => api.del('Vocabulary', id), 'delete word');
   });
 }
 
@@ -1523,7 +1653,7 @@ function handleAddGrammar(e) {
   closeModal();
   showToast('Grammar added!','success');
   renderCurrentView();
-  if(state.config.sheetsUrl) api.add('Grammar',data).catch(()=>{});
+  syncManager.push(() => api.add('Grammar', data), 'add grammar');
 }
 
 function showEditGrammarModal(id) {
@@ -1559,7 +1689,7 @@ function handleEditGrammar(e, id) {
   closeModal();
   showToast('Grammar updated','success');
   renderCurrentView();
-  if(state.config.sheetsUrl) api.update('Grammar',id,g).catch(()=>{});
+  syncManager.push(() => api.update('Grammar', id, g), 'update grammar');
 }
 
 function deleteGrammar(id) {
@@ -1569,7 +1699,7 @@ function deleteGrammar(id) {
     saveGrammar();
     showToast('Grammar deleted','info');
     renderCurrentView();
-    if(state.config.sheetsUrl) api.del('Grammar',id).catch(()=>{});
+    syncManager.push(() => api.del('Grammar', id), 'delete grammar');
   });
 }
 
@@ -1708,7 +1838,8 @@ function handleBatchAdd() {
       createdAt: new Date().toISOString()
     };
     state.vocabulary.push(data);
-    if (state.config.sheetsUrl) api.add('Vocabulary', data).catch(() => {});
+    const batchData = {...data};
+    syncManager.push(() => api.add('Vocabulary', batchData), 'batch add');
     added++;
   });
 
@@ -1998,7 +2129,8 @@ function updateSRS(item, quality) {
   if(vIdx>=0) {
     Object.assign(state.vocabulary[vIdx], result);
     saveVocab();
-    if(state.config.sheetsUrl) api.update('Vocabulary', item.id, state.vocabulary[vIdx]).catch(()=>{});
+    const updatedItem = {...state.vocabulary[vIdx]};
+    syncManager.push(() => api.update('Vocabulary', item.id, updatedItem), 'update SRS');
   }
 }
 
@@ -2060,36 +2192,11 @@ function renderSettings() {
     <h2 style="margin-bottom:20px">Settings</h2>
 
     <div class="settings-section">
-      <h3><i class="fas fa-cloud"></i> Google Sheets Sync</h3>
-      <div class="form-group">
-        <label>Apps Script URL</label>
-        <input id="set-sheets-url" placeholder="https://script.google.com/macros/s/.../exec" value="${esc(state.config.sheetsUrl)}">
-        <div class="hint">Deploy your Apps Script as a web app and paste the URL here</div>
+      <h3><i class="fas fa-cloud"></i> Cloud Sync</h3>
+      <div style="display:flex;align-items:center;gap:10px;padding:12px;background:var(--success-bg);border:2px solid var(--success);border-radius:var(--radius-sm)">
+        <i class="fas fa-circle-check" style="color:var(--success);font-size:18px"></i>
+        <div><b style="font-size:14px;color:var(--success)">Connected to Google Sheets</b><p style="font-size:12px;color:var(--text-1);margin-top:2px">Auto-sync is enabled. Changes save automatically.</p></div>
       </div>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-secondary btn-sm" onclick="testConnection()"><i class="fas fa-plug"></i> Test</button>
-        <button class="btn btn-secondary btn-sm" onclick="initSheets()"><i class="fas fa-database"></i> Init Sheets</button>
-        <button class="btn btn-primary btn-sm" onclick="saveSheetUrl()"><i class="fas fa-save"></i> Save</button>
-      </div>
-      <details style="margin-top:12px">
-        <summary style="cursor:pointer;font-size:14px;font-weight:600;color:var(--accent)"><i class="fas fa-book"></i> Setup Guide</summary>
-        <div style="margin-top:10px">
-          <ol class="steps">
-            <li>Create a new Google Spreadsheet</li>
-            <li>Go to <b>Extensions → Apps Script</b></li>
-            <li>Delete everything and paste the code below</li>
-            <li>Click <b>Deploy → New deployment</b></li>
-            <li>Type: <b>Web app</b></li>
-            <li>Execute as: <b>Me</b> — Who has access: <b>Anyone</b></li>
-            <li>Click <b>Deploy</b>, authorize, and copy the URL</li>
-            <li>Paste the URL above and click Save</li>
-          </ol>
-          <div style="margin-top:10px;position:relative">
-            <button class="btn btn-sm btn-secondary" style="margin-bottom:6px" onclick="copyScript()"><i class="fas fa-copy"></i> Copy Script</button>
-            <div class="code-block" id="script-code"></div>
-          </div>
-        </div>
-      </details>
     </div>
 
     <div class="settings-section">
@@ -2128,37 +2235,10 @@ function renderSettings() {
     </div>
   `;
 
-  // Render script code
-  document.getElementById('script-code').textContent = APPS_SCRIPT_CODE;
+  // Script code no longer displayed (sheets URL hardcoded)
 }
 
-function saveSheetUrl() {
-  state.config.sheetsUrl = document.getElementById('set-sheets-url').value.trim();
-  saveConfig();
-  showToast('Google Sheets URL saved','success');
-}
-
-async function testConnection() {
-  saveSheetUrl();
-  if(!state.config.sheetsUrl) { showToast('Enter a URL first','error'); return; }
-  try {
-    showToast('Testing connection...','info');
-    const r = await api.ping();
-    if(r.ok) showToast('Connection successful! ✓','success');
-    else showToast('Error: '+(r.error||'Unknown'),'error');
-  } catch(e) { showToast('Connection failed: '+e.message,'error'); }
-}
-
-async function initSheets() {
-  saveSheetUrl();
-  if(!state.config.sheetsUrl) { showToast('Enter a URL first','error'); return; }
-  try {
-    showToast('Initializing sheets...','info');
-    const r = await api.init();
-    if(r.ok) showToast('Sheets initialized! ✓','success');
-    else showToast('Error: '+(r.error||'Unknown'),'error');
-  } catch(e) { showToast('Init failed: '+e.message,'error'); }
-}
+/* saveSheetUrl, testConnection, initSheets removed — URL is hardcoded */
 
 function saveAIConfig() {
   state.config.aiEndpoint = document.getElementById('set-ai-endpoint').value.trim();
@@ -2392,14 +2472,11 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', eve
 function init() {
   loadState();
   renderCurrentView();
-  // Auto-sync if configured
-  if(state.config.sheetsUrl) {
-    setTimeout(()=> syncData(), 1500);
-  }
+  // Auto-pull from Google Sheets on load
+  setTimeout(() => syncManager.pull(), 800);
 }
 
 init();
 </script>
 </body>
-</html>
 </html>
