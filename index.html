@@ -325,17 +325,7 @@ a{color:var(--accent);text-decoration:none}
 .stat-card.accent{background:linear-gradient(135deg,rgba(10,186,181,0.08),rgba(196,163,90,0.06));border-color:var(--accent)}
 .stat-card.accent .num{background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 
-/* TTS Speaker Button */
-.tts-btn{
-  width:30px;height:30px;border:2px solid var(--border);border-radius:50%;
-  background:var(--bg-2);color:var(--accent);cursor:pointer;
-  display:inline-flex;align-items:center;justify-content:center;font-size:12px;
-  transition:all .2s;flex-shrink:0;
-}
-.tts-btn:hover{background:var(--accent-glow);border-color:var(--accent);transform:scale(1.1)}
-.tts-btn:active{transform:scale(0.9)}
-.tts-btn.speaking{animation:pulse-speak .8s ease infinite;border-color:var(--accent);background:var(--accent-glow)}
-@keyframes pulse-speak{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.6;transform:scale(0.95)}}
+/* TTS removed */
 
 /* Word/Grammar Item */
 .item-card{
@@ -1040,42 +1030,6 @@ function selectHeaderLang(lang) {
 }
 
 /* ============================================================
-   TEXT-TO-SPEECH (Pronunciation)
-   ============================================================ */
-const TTS_LANG_MAP = {
-  ja: 'ja-JP', de: 'de-DE', zh: 'zh-CN', ko: 'ko-KR',
-  fr: 'fr-FR', es: 'es-ES', it: 'it-IT', pt: 'pt-BR',
-  ru: 'ru-RU', ar: 'ar-SA', en: 'en-US'
-};
-
-function speak(text, langCode, btnEl) {
-  if (!window.speechSynthesis) { showToast('Speech not supported in this browser','error'); return; }
-  // Stop any current speech
-  window.speechSynthesis.cancel();
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = TTS_LANG_MAP[langCode] || 'en-US';
-  utter.rate = 0.85;
-  utter.pitch = 1;
-  // Try to find a matching voice
-  const voices = window.speechSynthesis.getVoices();
-  const match = voices.find(v => v.lang.startsWith(langCode)) || voices.find(v => v.lang.startsWith(utter.lang));
-  if (match) utter.voice = match;
-  // Animate button
-  if (btnEl) {
-    btnEl.classList.add('speaking');
-    utter.onend = () => btnEl.classList.remove('speaking');
-    utter.onerror = () => btnEl.classList.remove('speaking');
-  }
-  window.speechSynthesis.speak(utter);
-}
-
-// Pre-load voices (some browsers need this)
-if (window.speechSynthesis) {
-  window.speechSynthesis.getVoices();
-  window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
-}
-
-/* ============================================================
    NAVIGATION
    ============================================================ */
 function navigate(view) {
@@ -1263,10 +1217,7 @@ function showDashDetail(type, item) {
     slot.innerHTML = `
       <div class="dash-detail">
         <button class="dd-close" onclick="this.parentElement.remove()"><i class="fas fa-times"></i></button>
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
-          <div class="dd-word">${esc(item.word)}</div>
-          <button class="tts-btn" onclick="speak('${esc(item.word).replace(/'/g,"\\'")}','${item.lang}',this)" title="Listen"><i class="fas fa-volume-up"></i></button>
-        </div>
+        <div class="dd-word" style="margin-bottom:4px">${esc(item.word)}</div>
         ${item.reading ? `<div class="dd-reading">${esc(item.reading)}</div>` : ''}
         ${item.article ? `<div class="dd-article">${esc(item.article)}</div>` : ''}
         <div class="dd-meaning">${esc(item.meaning)}</div>
@@ -1353,10 +1304,7 @@ function renderWords() {
             <div class="item-card stagger" style="animation-delay:${Math.min(i*0.03,0.5)}s" onclick="showEditWordModal('${v.id}')">
               <div style="display:flex;justify-content:space-between;align-items:flex-start">
                 <div style="flex:1;min-width:0">
-                  <div style="display:flex;align-items:center;gap:8px">
-                    <div class="word">${esc(v.word)}</div>
-                    <button class="tts-btn" onclick="event.stopPropagation();speak('${esc(v.word).replace(/'/g,"\\'")}','${v.lang}',this)" title="Listen"><i class="fas fa-volume-up"></i></button>
-                  </div>
+                  <div class="word">${esc(v.word)}</div>
                   ${v.reading?`<div class="reading">${esc(v.reading)}</div>`:''}
                   ${v.article?`<span class="tag" style="font-size:11px;margin-top:3px">${esc(v.article)}</span>`:''}
                 </div>
@@ -1604,16 +1552,20 @@ function deleteFolder(name, view) {
 
 const setSearch = debounce(val=>{ state.filter.search=val; renderWords(); }, 250);
 
+const LANG_ATTR_MAP = { ja:'ja', de:'de', zh:'zh', ko:'ko', fr:'fr', es:'es', it:'it', pt:'pt', ru:'ru' };
+function langAttr(code) { return LANG_ATTR_MAP[code] || code || 'en'; }
+
 function showAddWordModal() {
   const lang = state.filter.lang;
+  const la = langAttr(lang);
   const currentFolder = state.filter.openFolder && state.filter.openFolder !== '__uncat' ? state.filter.openFolder : '';
   showModal(`
     <h2>Add Word</h2>
     <form id="add-word-form" onsubmit="handleAddWord(event)">
-      <div class="form-group"><label>Word / Expression</label><input id="aw-word" required placeholder="Enter word"></div>
+      <div class="form-group"><label>Word / Expression</label><input id="aw-word" required placeholder="Enter word" lang="${la}"></div>
       <div id="aw-extra-fields">${renderLangFields(lang,'aw')}</div>
-      <div class="form-group"><label>Meaning</label><input id="aw-meaning" required placeholder="Translation / definition"></div>
-      <div class="form-group"><label>Example Sentence</label><textarea id="aw-example" placeholder="Optional example sentence"></textarea></div>
+      <div class="form-group"><label>Meaning</label><input id="aw-meaning" required placeholder="翻譯 / 意思" lang="zh"></div>
+      <div class="form-group"><label>Example Sentence</label><textarea id="aw-example" placeholder="Optional example sentence" lang="${la}"></textarea></div>
       <div class="form-group"><label>Folder</label>${renderCategorySelect('aw-category',currentFolder)}</div>
       <div class="modal-actions">
         <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -1671,10 +1623,10 @@ function showEditWordModal(id) {
   showModal(`
     <h2>Edit Word</h2>
     <form id="edit-word-form" onsubmit="handleEditWord(event,'${id}')">
-      <div class="form-group"><label>Word</label><input id="ew-word" required value="${esc(v.word)}"></div>
+      <div class="form-group"><label>Word</label><input id="ew-word" lang="${langAttr(v.lang)}" required value="${esc(v.word)}"></div>
       <div id="ew-extra-fields">${renderLangFields(v.lang,'ew')}</div>
-      <div class="form-group"><label>Meaning</label><input id="ew-meaning" required value="${esc(v.meaning)}"></div>
-      <div class="form-group"><label>Example</label><textarea id="ew-example">${esc(v.example)}</textarea></div>
+      <div class="form-group"><label>Meaning</label><input id="ew-meaning" lang="zh" required value="${esc(v.meaning)}" placeholder="翻譯 / 意思"></div>
+      <div class="form-group"><label>Example</label><textarea id="ew-example" lang="${langAttr(v.lang)}">${esc(v.example)}</textarea></div>
       <div class="form-group"><label>Folder</label>${renderCategorySelect('ew-category',v.category||'')}</div>
       <div class="modal-actions">
         <button type="button" class="btn btn-danger btn-sm" onclick="deleteWord('${id}')"><i class="fas fa-trash"></i></button>
@@ -1820,9 +1772,9 @@ function showAddGrammarModal() {
   showModal(`
     <h2>Add Grammar</h2>
     <form onsubmit="handleAddGrammar(event)">
-      <div class="form-group"><label>Pattern / Rule</label><input id="ag-pattern" required placeholder="e.g. ～てから、Perfekt mit haben"></div>
-      <div class="form-group"><label>Explanation</label><textarea id="ag-explanation" required placeholder="What does this pattern mean? When to use it?"></textarea></div>
-      <div class="form-group"><label>Examples</label><textarea id="ag-examples" placeholder="One per line"></textarea></div>
+      <div class="form-group"><label>Pattern / Rule</label><input id="ag-pattern" lang="${langAttr(state.filter.lang)}" required placeholder="e.g. ～てから、Perfekt mit haben"></div>
+      <div class="form-group"><label>Explanation</label><textarea id="ag-explanation" lang="zh" required placeholder="這個文法是什麼意思？什麼時候用？"></textarea></div>
+      <div class="form-group"><label>Examples</label><textarea id="ag-examples" lang="${langAttr(state.filter.lang)}" placeholder="One per line"></textarea></div>
       <div class="form-group"><label>Folder</label>${renderCategorySelect('ag-category',currentFolder)}</div>
       <div class="modal-actions">
         <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -1859,9 +1811,9 @@ function showEditGrammarModal(id) {
   showModal(`
     <h2>Edit Grammar</h2>
     <form onsubmit="handleEditGrammar(event,'${id}')">
-      <div class="form-group"><label>Pattern</label><input id="eg-pattern" required value="${esc(g.pattern)}"></div>
-      <div class="form-group"><label>Explanation</label><textarea id="eg-explanation" required>${esc(g.explanation)}</textarea></div>
-      <div class="form-group"><label>Examples</label><textarea id="eg-examples">${esc(g.examples)}</textarea></div>
+      <div class="form-group"><label>Pattern</label><input id="eg-pattern" lang="${langAttr(g.lang)}" required value="${esc(g.pattern)}"></div>
+      <div class="form-group"><label>Explanation</label><textarea id="eg-explanation" lang="zh" required>${esc(g.explanation)}</textarea></div>
+      <div class="form-group"><label>Examples</label><textarea id="eg-examples" lang="${langAttr(g.lang)}">${esc(g.examples)}</textarea></div>
       <div class="form-group"><label>Folder</label>${renderCategorySelect('eg-category',g.category||'')}</div>
       <div class="modal-actions">
         <button type="button" class="btn btn-danger btn-sm" onclick="deleteGrammar('${id}')"><i class="fas fa-trash"></i></button>
@@ -2192,7 +2144,6 @@ function renderQuizActive(el) {
         <div class="prompt">${esc(current.prompt)}</div>
         <div class="question">${esc(current.question)}</div>
         ${current.questionSub?`<div class="question-sub">${esc(current.questionSub)}</div>`:''}
-        <button class="tts-btn" style="margin-top:10px" onclick="event.stopPropagation();speak('${esc(current.question).replace(/'/g,"\\'")}','${qLang}',this)" title="Listen"><i class="fas fa-volume-up"></i></button>
       </div>
       <div class="quiz-options" id="quiz-opts">
         ${current.options.map((o,i)=>`<button class="quiz-opt" onclick="answerMC(${i})">${esc(o)}</button>`).join('')}
@@ -2205,7 +2156,6 @@ function renderQuizActive(el) {
         <div class="prompt">${esc(current.prompt)}</div>
         <div class="question">${esc(current.question)}</div>
         ${current.questionSub?`<div class="question-sub">${esc(current.questionSub)}</div>`:''}
-        <button class="tts-btn" style="margin-top:10px" onclick="event.stopPropagation();speak('${esc(current.question).replace(/'/g,"\\'")}','${qLang}',this)" title="Listen"><i class="fas fa-volume-up"></i></button>
       </div>
       <div class="quiz-type-input">
         <form onsubmit="answerType(event)">
@@ -2224,7 +2174,6 @@ function renderQuizActive(el) {
             <div class="fc-label">Front</div>
             <div class="fc-text">${esc(current.front)}</div>
             ${current.frontSub?`<div class="fc-sub" style="font-family:var(--font-mono);color:var(--accent)">${esc(current.frontSub)}</div>`:''}
-            <button class="tts-btn" style="margin-top:10px" onclick="event.stopPropagation();speak('${esc(current.front).replace(/'/g,"\\'")}','${fcLang}',this)" title="Listen"><i class="fas fa-volume-up"></i></button>
             <div style="margin-top:8px;font-size:12px;color:var(--text-2)"><i class="fas fa-hand-pointer"></i> Tap to flip</div>
           </div>
           <div class="fc-face fc-back">
