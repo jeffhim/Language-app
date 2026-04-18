@@ -721,6 +721,22 @@ const api = {
   del(tab, id) { return this.req({action:'delete', tab, id}); },
   ping() { return this.req({action:'ping'}); },
   init() { return this.req({action:'init'}); },
+  // Config sheet helpers for syncing settings (e.g. langCategories) across devices
+  async loadRemoteConfig(key) {
+    try {
+      const res = await this.read('Config');
+      const entry = (res.data || []).find(r => String(r.id) === key);
+      if (entry && entry.value) return JSON.parse(entry.value);
+    } catch(e) { /* Config sheet may not exist yet */ }
+    return null;
+  },
+  async saveRemoteConfig(key, value) {
+    const strVal = JSON.stringify(value);
+    const res = await this.update('Config', key, {id: key, value: strVal});
+    if (res.error === 'ID not found' || res.error === 'Sheet not found') {
+      await this.add('Config', {id: key, value: strVal});
+    }
+  }
 };
 
 /* ============================================================
@@ -777,6 +793,21 @@ const syncManager = {
       const remoteGrammar = (gRes.data || []).map(normalizeGrammar);
       const localVocab = state.vocabulary;
       const localGrammar = state.grammar;
+
+      // ── Sync langCategories (folder config) across devices ──
+      const remoteLangCats = await api.loadRemoteConfig('langCategories');
+      const localLangCats = state.config.langCategories || {};
+      const hasLocalCats = Object.keys(localLangCats).some(k => localLangCats[k] && localLangCats[k].length > 0);
+
+      if (remoteLangCats) {
+        // Remote has folder config → merge: remote wins, keep local-only languages
+        const merged = Object.assign({}, localLangCats, remoteLangCats);
+        state.config.langCategories = merged;
+        saveConfig();
+      } else if (hasLocalCats) {
+        // No remote config but local has folders → push local config up
+        await api.saveRemoteConfig('langCategories', localLangCats);
+      }
 
       if (remoteVocab.length === 0 && remoteGrammar.length === 0 && (localVocab.length > 0 || localGrammar.length > 0)) {
         // Sheets are empty but we have local data → push everything up
@@ -1382,6 +1413,7 @@ function showCreateFolderPrompt(view) {
       if (!state.config.langCategories[lang].includes(val)) {
         state.config.langCategories[lang].push(val);
         saveConfig();
+        syncManager.push(() => api.saveRemoteConfig('langCategories', state.config.langCategories), 'sync folders');
       }
       inp.remove();
       state.filter.openFolder = val;
@@ -1416,6 +1448,7 @@ function moveFolder(name, direction, view) {
   // Swap
   [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
   saveConfig();
+  syncManager.push(() => api.saveRemoteConfig('langCategories', state.config.langCategories), 'sync folders');
   if (view === 'words') renderWords();
   else renderGrammar();
 }
@@ -1480,6 +1513,7 @@ function renameFolder(oldName, newName, view) {
     if (idx >= 0) state.config.categories[idx] = newName;
   }
   saveConfig();
+  syncManager.push(() => api.saveRemoteConfig('langCategories', state.config.langCategories), 'sync folders');
 
   // Update all vocabulary items with this folder
   let vocabChanged = false;
@@ -1522,6 +1556,7 @@ function deleteFolder(name, view) {
     state.config.categories = state.config.categories.filter(c => c !== name);
   }
   saveConfig();
+  syncManager.push(() => api.saveRemoteConfig('langCategories', state.config.langCategories), 'sync folders');
 
   // Clear category on all items in this folder (make them Unfiled)
   let vocabChanged = false;
