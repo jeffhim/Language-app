@@ -791,33 +791,30 @@ const syncManager = {
       const [vRes, gRes] = await Promise.all([api.read('Vocabulary'), api.read('Grammar')]);
       const remoteVocab = (vRes.data || []).map(normalizeVocab);
       const remoteGrammar = (gRes.data || []).map(normalizeGrammar);
-      const localVocab = state.vocabulary;
-      const localGrammar = state.grammar;
+      const localVocab = state.vocabulary.map(normalizeVocab);
+      const localGrammar = state.grammar.map(normalizeGrammar);
 
-      // ── Sync langCategories (folder config) across devices ──
-      const remoteLangCats = await api.loadRemoteConfig('langCategories');
-      const localLangCats = state.config.langCategories || {};
-      const hasLocalCats = Object.keys(localLangCats).some(k => localLangCats[k] && localLangCats[k].length > 0);
-
-      if (remoteLangCats) {
-        // Remote has folder config → merge: remote wins, keep local-only languages
-        const merged = Object.assign({}, localLangCats, remoteLangCats);
-        state.config.langCategories = merged;
-        saveConfig();
-      } else if (hasLocalCats) {
-        // No remote config but local has folders → push local config up
-        await api.saveRemoteConfig('langCategories', localLangCats);
-      }
+      // ── Sync langCategories (folder config) — wrapped in try-catch so failures don't break main sync ──
+      try {
+        const remoteLangCats = await api.loadRemoteConfig('langCategories');
+        const localLangCats = state.config.langCategories || {};
+        const hasLocalCats = Object.keys(localLangCats).some(k => localLangCats[k] && localLangCats[k].length > 0);
+        if (remoteLangCats) {
+          state.config.langCategories = Object.assign({}, localLangCats, remoteLangCats);
+          saveConfig();
+        } else if (hasLocalCats) {
+          try { await api.saveRemoteConfig('langCategories', localLangCats); } catch(e2) { /* Config sheet may not exist */ }
+        }
+      } catch(configErr) { /* Config sync failed — continue with vocab/grammar sync */ }
 
       if (remoteVocab.length === 0 && remoteGrammar.length === 0 && (localVocab.length > 0 || localGrammar.length > 0)) {
         // Sheets are empty but we have local data → push everything up
         this.setState('saving');
-        const pushOps = [];
-        localVocab.forEach(v => pushOps.push(api.add('Vocabulary', v)));
-        localGrammar.forEach(g => pushOps.push(api.add('Grammar', g)));
-        // Process in batches of 5 to avoid overwhelming the API
-        for (let i = 0; i < pushOps.length; i += 5) {
-          await Promise.all(pushOps.slice(i, i + 5));
+        const ops = [];
+        localVocab.forEach(v => ops.push(() => api.add('Vocabulary', v)));
+        localGrammar.forEach(g => ops.push(() => api.add('Grammar', g)));
+        for (let i = 0; i < ops.length; i += 5) {
+          await Promise.all(ops.slice(i, i + 5).map(fn => fn()));
         }
         this.setState('saved');
       } else if (remoteVocab.length > 0 || remoteGrammar.length > 0) {
@@ -827,20 +824,25 @@ const syncManager = {
         const localGById = {};
         localGrammar.forEach(g => { if(g.id) localGById[g.id] = g; });
 
-        // For items in both: preserve local category if remote is empty
-        const categoriesToPush = [];
+        // For items in both: preserve local category/fields if remote is empty
+        const fixOps = [];
         remoteVocab.forEach(v => {
           const local = localVById[v.id];
-          if (local && !v.category && local.category) {
-            v.category = local.category;
-            categoriesToPush.push(() => api.update('Vocabulary', v.id, v));
+          if (local) {
+            let changed = false;
+            if (!v.category && local.category) { v.category = local.category; changed = true; }
+            if (!v.meaning && local.meaning) { v.meaning = local.meaning; changed = true; }
+            if (!v.reading && local.reading) { v.reading = local.reading; changed = true; }
+            if (changed) fixOps.push(() => api.update('Vocabulary', v.id, v));
           }
         });
         remoteGrammar.forEach(g => {
           const local = localGById[g.id];
-          if (local && !g.category && local.category) {
-            g.category = local.category;
-            categoriesToPush.push(() => api.update('Grammar', g.id, g));
+          if (local) {
+            let changed = false;
+            if (!g.category && local.category) { g.category = local.category; changed = true; }
+            if (!g.explanation && local.explanation) { g.explanation = local.explanation; changed = true; }
+            if (changed) fixOps.push(() => api.update('Grammar', g.id, g));
           }
         });
 
@@ -849,31 +851,67 @@ const syncManager = {
         const localOnlyV = localVocab.filter(v => v.id && !remoteVIds.has(v.id));
         const localOnlyG = localGrammar.filter(g => g.id && !remoteGIds.has(g.id));
 
-        // Push local-only items + category fixes to sheets
-        const pushOps = [];
-        localOnlyV.forEach(v => pushOps.push(() => api.add('Vocabulary', v)));
-        localOnlyG.forEach(g => pushOps.push(() => api.add('Grammar', g)));
-        pushOps.push(...categoriesToPush);
-        if (pushOps.length > 0) {
-          for (let i = 0; i < pushOps.length; i += 5) {
-            await Promise.all(pushOps.slice(i, i + 5).map(fn => fn()));
-          }
+        // Push local-only items + field fixes to sheets
+        const allOps = [];
+        localOnlyV.forEach(v => allOps.push(() => api.add('Vocabulary', v)));
+        localOnlyG.forEach(g => allOps.push(() => api.add('Grammar', g)));
+        allOps.push(...fixOps);
+        for (let i = 0; i < allOps.length; i += 5) {
+          await Promise.all(allOps.slice(i, i + 5).map(fn => fn()));
         }
 
-        // Merge: remote data (with patched categories) + local-only items
+        // Final merged state
         state.vocabulary = [...remoteVocab, ...localOnlyV];
         state.grammar = [...remoteGrammar, ...localOnlyG];
         saveVocab();
         saveGrammar();
         this.setState('saved');
       } else {
-        // Both empty — nothing to do
         this.setState('saved');
       }
       renderCurrentView();
     } catch(e) {
+      console.log('Pull error: ' + (e.message || e));
       this.failedOps.push({ op: () => this.pull(), desc: 'pull' });
       this.setState('error');
+    }
+  },
+
+  // Force push ALL local data to Sheets (overwrites remote with local)
+  async pushAll() {
+    this.setState('saving');
+    try {
+      await api.init();
+      // Delete all remote data and re-push everything
+      const [vRes, gRes] = await Promise.all([api.read('Vocabulary'), api.read('Grammar')]);
+      const remoteVocab = vRes.data || [];
+      const remoteGrammar = gRes.data || [];
+
+      // Delete all remote items
+      const delOps = [];
+      remoteVocab.forEach(v => { if(v.id) delOps.push(() => api.del('Vocabulary', v.id)); });
+      remoteGrammar.forEach(g => { if(g.id) delOps.push(() => api.del('Grammar', g.id)); });
+      for (let i = 0; i < delOps.length; i += 5) {
+        await Promise.all(delOps.slice(i, i + 5).map(fn => fn()));
+      }
+
+      // Re-add all local items (with current categories)
+      const addOps = [];
+      state.vocabulary.forEach(v => addOps.push(() => api.add('Vocabulary', normalizeVocab(v))));
+      state.grammar.forEach(g => addOps.push(() => api.add('Grammar', normalizeGrammar(g))));
+      for (let i = 0; i < addOps.length; i += 5) {
+        await Promise.all(addOps.slice(i, i + 5).map(fn => fn()));
+      }
+
+      // Also push langCategories
+      try { await api.saveRemoteConfig('langCategories', state.config.langCategories || {}); } catch(e) { /* ok */ }
+
+      this.setState('saved');
+      showToast('All data pushed to Google Sheets!', 'success');
+    } catch(e) {
+      console.log('Push all error: ' + (e.message || e));
+      this.setState('error');
+      showToast('Push failed: ' + (e.message || 'Unknown error'), 'error');
     }
   },
 
@@ -2406,6 +2444,11 @@ function renderSettings() {
         <i class="fas fa-circle-check" style="color:var(--success);font-size:18px"></i>
         <div><b style="font-size:14px;color:var(--success)">Connected to Google Sheets</b><p style="font-size:12px;color:var(--text-1);margin-top:2px">Auto-sync is enabled. Changes save automatically.</p></div>
       </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button class="btn btn-secondary btn-sm" onclick="syncManager.pull().then(()=>renderSettings())"><i class="fas fa-cloud-arrow-down"></i> Pull from Sheets</button>
+        <button class="btn btn-primary btn-sm" onclick="syncManager.pushAll().then(()=>renderSettings())"><i class="fas fa-cloud-arrow-up"></i> Push All to Sheets</button>
+      </div>
+      <p style="font-size:11px;color:var(--text-2);margin-top:6px"><i class="fas fa-info-circle"></i> <b>Push All</b> overwrites Google Sheets with your phone/browser's local data (including folder assignments). Use this if Sheets data is out of date.</p>
     </div>
 
     <div class="settings-section">
