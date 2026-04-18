@@ -821,21 +821,46 @@ const syncManager = {
         }
         this.setState('saved');
       } else if (remoteVocab.length > 0 || remoteGrammar.length > 0) {
-        // Sheets have data → merge: use remote as source of truth, add any local-only items
+        // Sheets have data → smart merge with local data
+        const localVById = {};
+        localVocab.forEach(v => { if(v.id) localVById[v.id] = v; });
+        const localGById = {};
+        localGrammar.forEach(g => { if(g.id) localGById[g.id] = g; });
+
+        // For items in both: preserve local category if remote is empty
+        const categoriesToPush = [];
+        remoteVocab.forEach(v => {
+          const local = localVById[v.id];
+          if (local && !v.category && local.category) {
+            v.category = local.category;
+            categoriesToPush.push(() => api.update('Vocabulary', v.id, v));
+          }
+        });
+        remoteGrammar.forEach(g => {
+          const local = localGById[g.id];
+          if (local && !g.category && local.category) {
+            g.category = local.category;
+            categoriesToPush.push(() => api.update('Grammar', g.id, g));
+          }
+        });
+
         const remoteVIds = new Set(remoteVocab.map(v => v.id));
         const remoteGIds = new Set(remoteGrammar.map(g => g.id));
         const localOnlyV = localVocab.filter(v => v.id && !remoteVIds.has(v.id));
         const localOnlyG = localGrammar.filter(g => g.id && !remoteGIds.has(g.id));
-        // Push local-only items to sheets
-        if (localOnlyV.length > 0 || localOnlyG.length > 0) {
-          const pushOps = [];
-          localOnlyV.forEach(v => pushOps.push(api.add('Vocabulary', v)));
-          localOnlyG.forEach(g => pushOps.push(api.add('Grammar', g)));
+
+        // Push local-only items + category fixes to sheets
+        const pushOps = [];
+        localOnlyV.forEach(v => pushOps.push(() => api.add('Vocabulary', v)));
+        localOnlyG.forEach(g => pushOps.push(() => api.add('Grammar', g)));
+        pushOps.push(...categoriesToPush);
+        if (pushOps.length > 0) {
           for (let i = 0; i < pushOps.length; i += 5) {
-            await Promise.all(pushOps.slice(i, i + 5));
+            await Promise.all(pushOps.slice(i, i + 5).map(fn => fn()));
           }
         }
-        // Merge: remote data + local-only items
+
+        // Merge: remote data (with patched categories) + local-only items
         state.vocabulary = [...remoteVocab, ...localOnlyV];
         state.grammar = [...remoteGrammar, ...localOnlyG];
         saveVocab();
@@ -868,28 +893,31 @@ const syncManager = {
   }
 };
 
+// Safe string: guards against null, undefined, and the literal string "undefined"
+function safeStr(v) { return (v == null || v === 'undefined' || v === 'null') ? '' : String(v); }
+
 function normalizeVocab(v) {
   return {
-    id: String(v.id || ''), lang: String(v.lang || ''), word: String(v.word || ''),
-    reading: String(v.reading || ''), article: String(v.article || ''),
-    plural: String(v.plural || ''), meaning: String(v.meaning || ''),
-    example: String(v.example || ''), tags: String(v.tags || ''),
-    category: String(v.category || ''),
+    id: safeStr(v.id), lang: safeStr(v.lang), word: safeStr(v.word),
+    reading: safeStr(v.reading), article: safeStr(v.article),
+    plural: safeStr(v.plural), meaning: safeStr(v.meaning),
+    example: safeStr(v.example), tags: safeStr(v.tags),
+    category: safeStr(v.category),
     difficulty: Number(v.difficulty) || 0,
-    nextReview: String(v.nextReview || ''), interval: Number(v.interval) || 0,
+    nextReview: safeStr(v.nextReview), interval: Number(v.interval) || 0,
     easeFactor: Number(v.easeFactor) || 2.5, repetitions: Number(v.repetitions) || 0,
-    createdAt: String(v.createdAt || '')
+    createdAt: safeStr(v.createdAt)
   };
 }
 function normalizeGrammar(g) {
   return {
-    id: String(g.id || ''), lang: String(g.lang || ''), pattern: String(g.pattern || ''),
-    explanation: String(g.explanation || ''), examples: String(g.examples || ''),
-    tags: String(g.tags || ''), category: String(g.category || ''),
+    id: safeStr(g.id), lang: safeStr(g.lang), pattern: safeStr(g.pattern),
+    explanation: safeStr(g.explanation), examples: safeStr(g.examples),
+    tags: safeStr(g.tags), category: safeStr(g.category),
     difficulty: Number(g.difficulty) || 0,
-    nextReview: String(g.nextReview || ''), interval: Number(g.interval) || 0,
+    nextReview: safeStr(g.nextReview), interval: Number(g.interval) || 0,
     easeFactor: Number(g.easeFactor) || 2.5, repetitions: Number(g.repetitions) || 0,
-    createdAt: String(g.createdAt || '')
+    createdAt: safeStr(g.createdAt)
   };
 }
 function getUsedCategories(lang) {
@@ -976,7 +1004,7 @@ function getDueCount() {
    HELPERS
    ============================================================ */
 function uid() { return Date.now().toString(36) + Math.random().toString(36).substring(2,11); }
-function esc(s) { const d=document.createElement('div');d.textContent=s;return d.innerHTML; }
+function esc(s) { const d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML; }
 function shuffle(a){const b=[...a];for(let i=b.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[b[i],b[j]]=[b[j],b[i]];}return b;}
 function debounce(fn,ms){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms)};}
 function todayStr(){ return new Date().toISOString().split('T')[0]; }
@@ -2652,6 +2680,15 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', eve
    ============================================================ */
 function init() {
   loadState();
+  // Cleanup: fix any "undefined" strings in category fields from prior bugs
+  let cleaned = false;
+  state.vocabulary.forEach(v => {
+    if (v.category === 'undefined' || v.category === 'null') { v.category = ''; cleaned = true; }
+  });
+  state.grammar.forEach(g => {
+    if (g.category === 'undefined' || g.category === 'null') { g.category = ''; cleaned = true; }
+  });
+  if (cleaned) { saveVocab(); saveGrammar(); }
   renderCurrentView();
   // Auto-pull from Google Sheets on load
   setTimeout(() => syncManager.pull(), 800);
