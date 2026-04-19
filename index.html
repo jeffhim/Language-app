@@ -786,7 +786,6 @@ const syncManager = {
   async pull() {
     this.setState('pulling');
     try {
-      // Ensure sheets are initialized with proper headers first
       await api.init();
       const [vRes, gRes] = await Promise.all([api.read('Vocabulary'), api.read('Grammar')]);
       const remoteVocab = (vRes.data || []).map(normalizeVocab);
@@ -794,7 +793,7 @@ const syncManager = {
       const localVocab = state.vocabulary.map(normalizeVocab);
       const localGrammar = state.grammar.map(normalizeGrammar);
 
-      // ── Sync langCategories (folder config) — wrapped in try-catch so failures don't break main sync ──
+      // ── Sync langCategories config ──
       try {
         const remoteLangCats = await api.loadRemoteConfig('langCategories');
         const localLangCats = state.config.langCategories || {};
@@ -803,72 +802,19 @@ const syncManager = {
           state.config.langCategories = Object.assign({}, localLangCats, remoteLangCats);
           saveConfig();
         } else if (hasLocalCats) {
-          try { await api.saveRemoteConfig('langCategories', localLangCats); } catch(e2) { /* Config sheet may not exist */ }
+          try { await api.saveRemoteConfig('langCategories', localLangCats); } catch(e2) {}
         }
-      } catch(configErr) { /* Config sync failed — continue with vocab/grammar sync */ }
+      } catch(configErr) {}
 
-      if (remoteVocab.length === 0 && remoteGrammar.length === 0 && (localVocab.length > 0 || localGrammar.length > 0)) {
-        // Sheets are empty but we have local data → push everything up
-        this.setState('saving');
-        const ops = [];
-        localVocab.forEach(v => ops.push(() => api.add('Vocabulary', v)));
-        localGrammar.forEach(g => ops.push(() => api.add('Grammar', g)));
-        for (let i = 0; i < ops.length; i += 5) {
-          await Promise.all(ops.slice(i, i + 5).map(fn => fn()));
-        }
-        this.setState('saved');
-      } else if (remoteVocab.length > 0 || remoteGrammar.length > 0) {
-        // Sheets have data → smart merge with local data
-        const localVById = {};
-        localVocab.forEach(v => { if(v.id) localVById[v.id] = v; });
-        const localGById = {};
-        localGrammar.forEach(g => { if(g.id) localGById[g.id] = g; });
+      // ── Merge vocab: match by ID first, then by word+lang to catch duplicates ──
+      const merged = mergeItems(localVocab, remoteVocab, 'vocab');
+      const mergedG = mergeItems(localGrammar, remoteGrammar, 'grammar');
 
-        // For items in both: preserve local category/fields if remote is empty
-        const fixOps = [];
-        remoteVocab.forEach(v => {
-          const local = localVById[v.id];
-          if (local) {
-            let changed = false;
-            if (!v.category && local.category) { v.category = local.category; changed = true; }
-            if (!v.meaning && local.meaning) { v.meaning = local.meaning; changed = true; }
-            if (!v.reading && local.reading) { v.reading = local.reading; changed = true; }
-            if (changed) fixOps.push(() => api.update('Vocabulary', v.id, v));
-          }
-        });
-        remoteGrammar.forEach(g => {
-          const local = localGById[g.id];
-          if (local) {
-            let changed = false;
-            if (!g.category && local.category) { g.category = local.category; changed = true; }
-            if (!g.explanation && local.explanation) { g.explanation = local.explanation; changed = true; }
-            if (changed) fixOps.push(() => api.update('Grammar', g.id, g));
-          }
-        });
-
-        const remoteVIds = new Set(remoteVocab.map(v => v.id));
-        const remoteGIds = new Set(remoteGrammar.map(g => g.id));
-        const localOnlyV = localVocab.filter(v => v.id && !remoteVIds.has(v.id));
-        const localOnlyG = localGrammar.filter(g => g.id && !remoteGIds.has(g.id));
-
-        // Push local-only items + field fixes to sheets
-        const allOps = [];
-        localOnlyV.forEach(v => allOps.push(() => api.add('Vocabulary', v)));
-        localOnlyG.forEach(g => allOps.push(() => api.add('Grammar', g)));
-        allOps.push(...fixOps);
-        for (let i = 0; i < allOps.length; i += 5) {
-          await Promise.all(allOps.slice(i, i + 5).map(fn => fn()));
-        }
-
-        // Final merged state
-        state.vocabulary = [...remoteVocab, ...localOnlyV];
-        state.grammar = [...remoteGrammar, ...localOnlyG];
-        saveVocab();
-        saveGrammar();
-        this.setState('saved');
-      } else {
-        this.setState('saved');
-      }
+      state.vocabulary = merged;
+      state.grammar = mergedG;
+      saveVocab();
+      saveGrammar();
+      this.setState('saved');
       renderCurrentView();
     } catch(e) {
       console.log('Pull error: ' + (e.message || e));
@@ -877,41 +823,79 @@ const syncManager = {
     }
   },
 
-  // Force push ALL local data to Sheets (overwrites remote with local)
+  // Push local categories to Sheets + deduplicate + pull back clean data
   async pushAll() {
     this.setState('saving');
     try {
       await api.init();
-      // Delete all remote data and re-push everything
       const [vRes, gRes] = await Promise.all([api.read('Vocabulary'), api.read('Grammar')]);
-      const remoteVocab = vRes.data || [];
-      const remoteGrammar = gRes.data || [];
+      const remoteVocab = (vRes.data || []).map(normalizeVocab);
+      const remoteGrammar = (gRes.data || []).map(normalizeGrammar);
 
-      // Delete all remote items
+      // Step 1: Deduplicate remote data on Sheets (delete dupes by word+lang)
+      const vDeduped = dedup(remoteVocab, 'vocab');
+      const gDeduped = dedup(remoteGrammar, 'grammar');
+      const vDupeIds = remoteVocab.filter(v => !vDeduped.some(d => d.id === v.id)).map(v => v.id);
+      const gDupeIds = remoteGrammar.filter(g => !gDeduped.some(d => d.id === g.id)).map(g => g.id);
+
+      // Delete dupes from Sheets
       const delOps = [];
-      remoteVocab.forEach(v => { if(v.id) delOps.push(() => api.del('Vocabulary', v.id)); });
-      remoteGrammar.forEach(g => { if(g.id) delOps.push(() => api.del('Grammar', g.id)); });
+      vDupeIds.forEach(id => delOps.push(() => api.del('Vocabulary', id)));
+      gDupeIds.forEach(id => delOps.push(() => api.del('Grammar', id)));
       for (let i = 0; i < delOps.length; i += 5) {
         await Promise.all(delOps.slice(i, i + 5).map(fn => fn()));
       }
 
-      // Re-add all local items (with current categories)
-      const addOps = [];
-      state.vocabulary.forEach(v => addOps.push(() => api.add('Vocabulary', normalizeVocab(v))));
-      state.grammar.forEach(g => addOps.push(() => api.add('Grammar', normalizeGrammar(g))));
-      for (let i = 0; i < addOps.length; i += 5) {
-        await Promise.all(addOps.slice(i, i + 5).map(fn => fn()));
+      // Step 2: Merge local categories into deduped remote data
+      const localVocab = state.vocabulary.map(normalizeVocab);
+      const localGrammar = state.grammar.map(normalizeGrammar);
+
+      // Build local lookup by word+lang
+      const localVByKey = {};
+      localVocab.forEach(v => { const k = (v.word + '|' + v.lang).toLowerCase(); if (!localVByKey[k]) localVByKey[k] = v; });
+      const localGByKey = {};
+      localGrammar.forEach(g => { const k = (g.pattern + '|' + g.lang).toLowerCase(); if (!localGByKey[k]) localGByKey[k] = g; });
+
+      const updateOps = [];
+      vDeduped.forEach(v => {
+        const k = (v.word + '|' + v.lang).toLowerCase();
+        const local = localVByKey[k];
+        if (local && local.category && !v.category) {
+          v.category = local.category;
+          updateOps.push(() => api.update('Vocabulary', v.id, v));
+        }
+      });
+      gDeduped.forEach(g => {
+        const k = (g.pattern + '|' + g.lang).toLowerCase();
+        const local = localGByKey[k];
+        if (local && local.category && !g.category) {
+          g.category = local.category;
+          updateOps.push(() => api.update('Grammar', g.id, g));
+        }
+      });
+
+      for (let i = 0; i < updateOps.length; i += 5) {
+        await Promise.all(updateOps.slice(i, i + 5).map(fn => fn()));
       }
 
-      // Also push langCategories
-      try { await api.saveRemoteConfig('langCategories', state.config.langCategories || {}); } catch(e) { /* ok */ }
+      // Push langCategories
+      try { await api.saveRemoteConfig('langCategories', state.config.langCategories || {}); } catch(e) {}
+
+      // Step 3: Pull back clean data
+      const [vRes2, gRes2] = await Promise.all([api.read('Vocabulary'), api.read('Grammar')]);
+      state.vocabulary = dedup((vRes2.data || []).map(normalizeVocab), 'vocab');
+      state.grammar = dedup((gRes2.data || []).map(normalizeGrammar), 'grammar');
+      saveVocab();
+      saveGrammar();
 
       this.setState('saved');
-      showToast('All data pushed to Google Sheets!', 'success');
+      renderCurrentView();
+      const removed = vDupeIds.length + gDupeIds.length;
+      showToast('Done! Removed ' + removed + ' duplicates, updated categories.', 'success');
     } catch(e) {
       console.log('Push all error: ' + (e.message || e));
       this.setState('error');
-      showToast('Push failed: ' + (e.message || 'Unknown error'), 'error');
+      showToast('Sync failed: ' + (e.message || 'Unknown error'), 'error');
     }
   },
 
@@ -958,6 +942,68 @@ function normalizeGrammar(g) {
     createdAt: safeStr(g.createdAt)
   };
 }
+// ── Deduplication: keep best version of each word+lang / pattern+lang ──
+function dedup(items, type) {
+  const keyFn = type === 'vocab'
+    ? v => (v.word + '|' + v.lang).toLowerCase()
+    : g => (g.pattern + '|' + g.lang).toLowerCase();
+  const best = {};
+  items.forEach(item => {
+    const k = keyFn(item);
+    if (!best[k]) { best[k] = item; return; }
+    // Keep the one with more data (category > no category, more fields filled)
+    const prev = best[k];
+    const scoreItem = (item.category ? 10 : 0) + (item.meaning || item.explanation ? 5 : 0) + (item.reading ? 2 : 0) + (item.example || item.examples ? 2 : 0);
+    const scorePrev = (prev.category ? 10 : 0) + (prev.meaning || prev.explanation ? 5 : 0) + (prev.reading ? 2 : 0) + (prev.example || prev.examples ? 2 : 0);
+    if (scoreItem > scorePrev) best[k] = item;
+    else if (scoreItem === scorePrev && (item.createdAt || '') > (prev.createdAt || '')) best[k] = item;
+  });
+  return Object.values(best);
+}
+
+// ── Merge local + remote items, matching by word+lang to avoid duplicates ──
+function mergeItems(local, remote, type) {
+  const keyFn = type === 'vocab'
+    ? v => (v.word + '|' + v.lang).toLowerCase()
+    : g => (g.pattern + '|' + g.lang).toLowerCase();
+
+  // Index local items by both ID and word+lang key
+  const localById = {};
+  const localByKey = {};
+  local.forEach(item => {
+    if (item.id) localById[item.id] = item;
+    const k = keyFn(item);
+    if (!localByKey[k]) localByKey[k] = item;
+  });
+
+  // Start with remote items, enriched with local data where needed
+  const merged = {};
+  remote.forEach(item => {
+    const k = keyFn(item);
+    // Find matching local item by ID or by word+lang
+    const localMatch = localById[item.id] || localByKey[k];
+    if (localMatch) {
+      // Merge: prefer non-empty values from either side
+      if (!item.category && localMatch.category) item.category = localMatch.category;
+      if (!item.meaning && localMatch.meaning) item.meaning = localMatch.meaning;
+      if (!item.reading && localMatch.reading) item.reading = localMatch.reading;
+      if (!item.explanation && localMatch.explanation) item.explanation = localMatch.explanation;
+      if (!item.example && localMatch.example) item.example = localMatch.example;
+      if (!item.examples && localMatch.examples) item.examples = localMatch.examples;
+    }
+    // Keep first occurrence per key (dedup)
+    if (!merged[k]) merged[k] = item;
+  });
+
+  // Add any local-only items (not in remote by ID or by word+lang)
+  local.forEach(item => {
+    const k = keyFn(item);
+    if (!merged[k]) merged[k] = item;
+  });
+
+  return Object.values(merged);
+}
+
 function getUsedCategories(lang) {
   // Build ordered list: langCategories order first, then any extras from data
   const ordered = [];
@@ -2446,9 +2492,9 @@ function renderSettings() {
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
         <button class="btn btn-secondary btn-sm" onclick="syncManager.pull().then(()=>renderSettings())"><i class="fas fa-cloud-arrow-down"></i> Pull from Sheets</button>
-        <button class="btn btn-primary btn-sm" onclick="syncManager.pushAll().then(()=>renderSettings())"><i class="fas fa-cloud-arrow-up"></i> Push All to Sheets</button>
+        <button class="btn btn-primary btn-sm" onclick="syncManager.pushAll().then(()=>renderSettings())"><i class="fas fa-cloud-arrow-up"></i> Sync &amp; Clean Duplicates</button>
       </div>
-      <p style="font-size:11px;color:var(--text-2);margin-top:6px"><i class="fas fa-info-circle"></i> <b>Push All</b> overwrites Google Sheets with your phone/browser's local data (including folder assignments). Use this if Sheets data is out of date.</p>
+      <p style="font-size:11px;color:var(--text-2);margin-top:6px"><i class="fas fa-info-circle"></i> <b>Sync &amp; Clean</b> removes duplicate words, pushes your folder assignments to Google Sheets, then pulls back the clean merged data.</p>
     </div>
 
     <div class="settings-section">
