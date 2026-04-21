@@ -793,7 +793,7 @@ const syncManager = {
       const localVocab = state.vocabulary.map(normalizeVocab);
       const localGrammar = state.grammar.map(normalizeGrammar);
 
-      // ── Sync langCategories config ──
+      // Sync langCategories config (safe — won't crash main sync)
       try {
         const remoteLangCats = await api.loadRemoteConfig('langCategories');
         const localLangCats = state.config.langCategories || {};
@@ -806,12 +806,9 @@ const syncManager = {
         }
       } catch(configErr) {}
 
-      // ── Merge vocab: match by ID first, then by word+lang to catch duplicates ──
-      const merged = mergeItems(localVocab, remoteVocab, 'vocab');
-      const mergedG = mergeItems(localGrammar, remoteGrammar, 'grammar');
-
-      state.vocabulary = merged;
-      state.grammar = mergedG;
+      // Merge: deduplicate by word+lang, preserve local categories
+      state.vocabulary = _mergeItems(localVocab, remoteVocab, 'vocab');
+      state.grammar = _mergeItems(localGrammar, remoteGrammar, 'grammar');
       saveVocab();
       saveGrammar();
       this.setState('saved');
@@ -823,77 +820,99 @@ const syncManager = {
     }
   },
 
-  // Push local categories to Sheets + deduplicate + pull back clean data
+  // Sync & Clean: deduplicate Sheets, push local categories, pull back clean data
   async pushAll() {
     this.setState('saving');
     try {
       await api.init();
+
+      // 1. Read all remote data
       const [vRes, gRes] = await Promise.all([api.read('Vocabulary'), api.read('Grammar')]);
       const remoteVocab = (vRes.data || []).map(normalizeVocab);
       const remoteGrammar = (gRes.data || []).map(normalizeGrammar);
 
-      // Step 1: Deduplicate remote data on Sheets (delete dupes by word+lang)
-      const vDeduped = dedup(remoteVocab, 'vocab');
-      const gDeduped = dedup(remoteGrammar, 'grammar');
-      const vDupeIds = remoteVocab.filter(v => !vDeduped.some(d => d.id === v.id)).map(v => v.id);
-      const gDupeIds = remoteGrammar.filter(g => !gDeduped.some(d => d.id === g.id)).map(g => g.id);
+      // 2. Deduplicate remote by word+lang — find which IDs to delete
+      const keepV = _dedup(remoteVocab, 'vocab');
+      const keepG = _dedup(remoteGrammar, 'grammar');
+      const keepVIds = new Set(keepV.map(v => v.id));
+      const keepGIds = new Set(keepG.map(g => g.id));
+      const delVIds = remoteVocab.filter(v => !keepVIds.has(v.id)).map(v => v.id);
+      const delGIds = remoteGrammar.filter(g => !keepGIds.has(g.id)).map(g => g.id);
 
-      // Delete dupes from Sheets
+      // Delete duplicate rows from Sheets
       const delOps = [];
-      vDupeIds.forEach(id => delOps.push(() => api.del('Vocabulary', id)));
-      gDupeIds.forEach(id => delOps.push(() => api.del('Grammar', id)));
+      delVIds.forEach(id => delOps.push(() => api.del('Vocabulary', id)));
+      delGIds.forEach(id => delOps.push(() => api.del('Grammar', id)));
       for (let i = 0; i < delOps.length; i += 5) {
         await Promise.all(delOps.slice(i, i + 5).map(fn => fn()));
       }
 
-      // Step 2: Merge local categories into deduped remote data
+      // 3. Build local lookup by word+lang to find folder assignments
       const localVocab = state.vocabulary.map(normalizeVocab);
       const localGrammar = state.grammar.map(normalizeGrammar);
+      const localVByWord = {};
+      localVocab.forEach(v => { const k = (v.word + '|' + v.lang).toLowerCase(); if (!localVByWord[k] || v.category) localVByWord[k] = v; });
+      const localGByWord = {};
+      localGrammar.forEach(g => { const k = (g.pattern + '|' + g.lang).toLowerCase(); if (!localGByWord[k] || g.category) localGByWord[k] = g; });
 
-      // Build local lookup by word+lang
-      const localVByKey = {};
-      localVocab.forEach(v => { const k = (v.word + '|' + v.lang).toLowerCase(); if (!localVByKey[k]) localVByKey[k] = v; });
-      const localGByKey = {};
-      localGrammar.forEach(g => { const k = (g.pattern + '|' + g.lang).toLowerCase(); if (!localGByKey[k]) localGByKey[k] = g; });
-
+      // 4. Update kept remote items: fix lang-code categories AND apply local folder names
+      const realCat = (c, lang) => c && !isLangCodeCategory(c, lang);
       const updateOps = [];
-      vDeduped.forEach(v => {
+      keepV.forEach(v => {
         const k = (v.word + '|' + v.lang).toLowerCase();
-        const local = localVByKey[k];
-        if (local && local.category && !v.category) {
+        const local = localVByWord[k];
+        let needsUpdate = false;
+        // If remote category is a lang code, clear it
+        if (v.category && isLangCodeCategory(v.category, v.lang)) {
+          v.category = '';
+          needsUpdate = true;
+        }
+        // Apply local folder name if local has a real one
+        if (local && realCat(local.category, local.lang) && local.category !== v.category) {
           v.category = local.category;
+          needsUpdate = true;
+        }
+        if (needsUpdate) {
           updateOps.push(() => api.update('Vocabulary', v.id, v));
         }
       });
-      gDeduped.forEach(g => {
+      keepG.forEach(g => {
         const k = (g.pattern + '|' + g.lang).toLowerCase();
-        const local = localGByKey[k];
-        if (local && local.category && !g.category) {
+        const local = localGByWord[k];
+        let needsUpdate = false;
+        if (g.category && isLangCodeCategory(g.category, g.lang)) {
+          g.category = '';
+          needsUpdate = true;
+        }
+        if (local && realCat(local.category, local.lang) && local.category !== g.category) {
           g.category = local.category;
+          needsUpdate = true;
+        }
+        if (needsUpdate) {
           updateOps.push(() => api.update('Grammar', g.id, g));
         }
       });
-
       for (let i = 0; i < updateOps.length; i += 5) {
         await Promise.all(updateOps.slice(i, i + 5).map(fn => fn()));
       }
 
-      // Push langCategories
+      // Push langCategories config
       try { await api.saveRemoteConfig('langCategories', state.config.langCategories || {}); } catch(e) {}
 
-      // Step 3: Pull back clean data
+      // 5. Pull back clean data from Sheets
       const [vRes2, gRes2] = await Promise.all([api.read('Vocabulary'), api.read('Grammar')]);
-      state.vocabulary = dedup((vRes2.data || []).map(normalizeVocab), 'vocab');
-      state.grammar = dedup((gRes2.data || []).map(normalizeGrammar), 'grammar');
+      state.vocabulary = _dedup((vRes2.data || []).map(normalizeVocab), 'vocab');
+      state.grammar = _dedup((gRes2.data || []).map(normalizeGrammar), 'grammar');
       saveVocab();
       saveGrammar();
 
       this.setState('saved');
       renderCurrentView();
-      const removed = vDupeIds.length + gDupeIds.length;
-      showToast('Done! Removed ' + removed + ' duplicates, updated categories.', 'success');
+      const removed = delVIds.length + delGIds.length;
+      const updated = updateOps.length;
+      showToast('Removed ' + removed + ' duplicates, updated ' + updated + ' categories', 'success');
     } catch(e) {
-      console.log('Push all error: ' + (e.message || e));
+      console.log('Sync error: ' + (e.message || e));
       this.setState('error');
       showToast('Sync failed: ' + (e.message || 'Unknown error'), 'error');
     }
@@ -918,13 +937,29 @@ const syncManager = {
 // Safe string: guards against null, undefined, and the literal string "undefined"
 function safeStr(v) { return (v == null || v === 'undefined' || v === 'null') ? '' : String(v); }
 
+// Detect when a language code (e.g. "ja") was accidentally stored as a folder/category name.
+// These are NOT real folder names and should be treated as empty.
+const _LANG_CODES = new Set(Object.keys(LANGS));
+function isLangCodeCategory(cat, lang) {
+  if (!cat) return false;
+  const c = cat.toLowerCase().trim();
+  return c === lang || _LANG_CODES.has(c);
+}
+
+// Clean category: strip lang codes that were incorrectly used as folder names
+function cleanCategory(cat, lang) {
+  const c = safeStr(cat);
+  return isLangCodeCategory(c, safeStr(lang)) ? '' : c;
+}
+
 function normalizeVocab(v) {
+  const lang = safeStr(v.lang);
   return {
-    id: safeStr(v.id), lang: safeStr(v.lang), word: safeStr(v.word),
+    id: safeStr(v.id), lang: lang, word: safeStr(v.word),
     reading: safeStr(v.reading), article: safeStr(v.article),
     plural: safeStr(v.plural), meaning: safeStr(v.meaning),
     example: safeStr(v.example), tags: safeStr(v.tags),
-    category: safeStr(v.category),
+    category: cleanCategory(v.category, lang),
     difficulty: Number(v.difficulty) || 0,
     nextReview: safeStr(v.nextReview), interval: Number(v.interval) || 0,
     easeFactor: Number(v.easeFactor) || 2.5, repetitions: Number(v.repetitions) || 0,
@@ -932,18 +967,20 @@ function normalizeVocab(v) {
   };
 }
 function normalizeGrammar(g) {
+  const lang = safeStr(g.lang);
   return {
-    id: safeStr(g.id), lang: safeStr(g.lang), pattern: safeStr(g.pattern),
+    id: safeStr(g.id), lang: lang, pattern: safeStr(g.pattern),
     explanation: safeStr(g.explanation), examples: safeStr(g.examples),
-    tags: safeStr(g.tags), category: safeStr(g.category),
+    tags: safeStr(g.tags), category: cleanCategory(g.category, lang),
     difficulty: Number(g.difficulty) || 0,
     nextReview: safeStr(g.nextReview), interval: Number(g.interval) || 0,
     easeFactor: Number(g.easeFactor) || 2.5, repetitions: Number(g.repetitions) || 0,
     createdAt: safeStr(g.createdAt)
   };
 }
-// ── Deduplication: keep best version of each word+lang / pattern+lang ──
-function dedup(items, type) {
+// Deduplicate items by word+lang (vocab) or pattern+lang (grammar).
+// Keeps the version with the most data (prefers one with a folder/category).
+function _dedup(items, type) {
   const keyFn = type === 'vocab'
     ? v => (v.word + '|' + v.lang).toLowerCase()
     : g => (g.pattern + '|' + g.lang).toLowerCase();
@@ -951,56 +988,43 @@ function dedup(items, type) {
   items.forEach(item => {
     const k = keyFn(item);
     if (!best[k]) { best[k] = item; return; }
-    // Keep the one with more data (category > no category, more fields filled)
     const prev = best[k];
-    const scoreItem = (item.category ? 10 : 0) + (item.meaning || item.explanation ? 5 : 0) + (item.reading ? 2 : 0) + (item.example || item.examples ? 2 : 0);
-    const scorePrev = (prev.category ? 10 : 0) + (prev.meaning || prev.explanation ? 5 : 0) + (prev.reading ? 2 : 0) + (prev.example || prev.examples ? 2 : 0);
-    if (scoreItem > scorePrev) best[k] = item;
-    else if (scoreItem === scorePrev && (item.createdAt || '') > (prev.createdAt || '')) best[k] = item;
+    // Score: real folder name = 10pts, lang codes don't count
+    const sc = (x) => ((x.category && !isLangCodeCategory(x.category, x.lang)) ? 10 : 0) + (x.meaning || x.explanation ? 5 : 0) + (x.reading ? 2 : 0) + (x.example || x.examples ? 1 : 0);
+    if (sc(item) > sc(prev)) best[k] = item;
   });
   return Object.values(best);
 }
 
-// ── Merge local + remote items, matching by word+lang to avoid duplicates ──
-function mergeItems(local, remote, type) {
+// Merge local + remote arrays. Matches by word+lang (not just ID) to avoid duplicates.
+// For matched items: keeps remote as base but fills in local category/fields if remote is empty.
+function _mergeItems(local, remote, type) {
   const keyFn = type === 'vocab'
     ? v => (v.word + '|' + v.lang).toLowerCase()
     : g => (g.pattern + '|' + g.lang).toLowerCase();
-
-  // Index local items by both ID and word+lang key
-  const localById = {};
+  // Helper: is this a real folder name? (not empty, not a lang code)
+  const realCat = (c, lang) => c && !isLangCodeCategory(c, lang);
+  // Index local by word+lang key — prefer entries with real folder names
   const localByKey = {};
-  local.forEach(item => {
-    if (item.id) localById[item.id] = item;
-    const k = keyFn(item);
-    if (!localByKey[k]) localByKey[k] = item;
-  });
-
-  // Start with remote items, enriched with local data where needed
+  local.forEach(item => { const k = keyFn(item); if (!localByKey[k] || realCat(item.category, item.lang)) localByKey[k] = item; });
+  // Build merged map starting from remote
   const merged = {};
   remote.forEach(item => {
     const k = keyFn(item);
-    // Find matching local item by ID or by word+lang
-    const localMatch = localById[item.id] || localByKey[k];
-    if (localMatch) {
-      // Merge: prefer non-empty values from either side
-      if (!item.category && localMatch.category) item.category = localMatch.category;
-      if (!item.meaning && localMatch.meaning) item.meaning = localMatch.meaning;
-      if (!item.reading && localMatch.reading) item.reading = localMatch.reading;
-      if (!item.explanation && localMatch.explanation) item.explanation = localMatch.explanation;
-      if (!item.example && localMatch.example) item.example = localMatch.example;
-      if (!item.examples && localMatch.examples) item.examples = localMatch.examples;
+    const loc = localByKey[k];
+    if (loc) {
+      // Fill in local data where remote is empty or has lang-code-as-category
+      if (!realCat(item.category, item.lang) && realCat(loc.category, loc.lang)) item.category = loc.category;
+      if (!item.meaning && loc.meaning) item.meaning = loc.meaning;
+      if (!item.reading && loc.reading) item.reading = loc.reading;
+      if (!item.explanation && loc.explanation) item.explanation = loc.explanation;
+      if (!item.example && loc.example) item.example = loc.example;
+      if (!item.examples && loc.examples) item.examples = loc.examples;
     }
-    // Keep first occurrence per key (dedup)
     if (!merged[k]) merged[k] = item;
   });
-
-  // Add any local-only items (not in remote by ID or by word+lang)
-  local.forEach(item => {
-    const k = keyFn(item);
-    if (!merged[k]) merged[k] = item;
-  });
-
+  // Add local-only items not in remote
+  local.forEach(item => { const k = keyFn(item); if (!merged[k]) merged[k] = item; });
   return Object.values(merged);
 }
 
@@ -2494,7 +2518,7 @@ function renderSettings() {
         <button class="btn btn-secondary btn-sm" onclick="syncManager.pull().then(()=>renderSettings())"><i class="fas fa-cloud-arrow-down"></i> Pull from Sheets</button>
         <button class="btn btn-primary btn-sm" onclick="syncManager.pushAll().then(()=>renderSettings())"><i class="fas fa-cloud-arrow-up"></i> Sync &amp; Clean Duplicates</button>
       </div>
-      <p style="font-size:11px;color:var(--text-2);margin-top:6px"><i class="fas fa-info-circle"></i> <b>Sync &amp; Clean</b> removes duplicate words, pushes your folder assignments to Google Sheets, then pulls back the clean merged data.</p>
+      <p style="font-size:11px;color:var(--text-2);margin-top:6px"><i class="fas fa-info-circle"></i> <b>Sync &amp; Clean</b> removes duplicate words from Google Sheets, pushes your folder assignments, then pulls back the clean merged data.</p>
     </div>
 
     <div class="settings-section">
@@ -2769,13 +2793,17 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', eve
    ============================================================ */
 function init() {
   loadState();
-  // Cleanup: fix any "undefined" strings in category fields from prior bugs
+  // Cleanup: fix "undefined", "null", and lang-code-as-category from prior bugs
   let cleaned = false;
   state.vocabulary.forEach(v => {
-    if (v.category === 'undefined' || v.category === 'null') { v.category = ''; cleaned = true; }
+    if (v.category === 'undefined' || v.category === 'null' || isLangCodeCategory(v.category, v.lang)) {
+      v.category = ''; cleaned = true;
+    }
   });
   state.grammar.forEach(g => {
-    if (g.category === 'undefined' || g.category === 'null') { g.category = ''; cleaned = true; }
+    if (g.category === 'undefined' || g.category === 'null' || isLangCodeCategory(g.category, g.lang)) {
+      g.category = ''; cleaned = true;
+    }
   });
   if (cleaned) { saveVocab(); saveGrammar(); }
   renderCurrentView();
