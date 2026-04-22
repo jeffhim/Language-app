@@ -826,10 +826,18 @@ const syncManager = {
     try {
       await api.init();
 
-      // 1. Read all remote data
+      // 1. Read all remote data — keep RAW category for Sheets cleanup
       const [vRes, gRes] = await Promise.all([api.read('Vocabulary'), api.read('Grammar')]);
-      const remoteVocab = (vRes.data || []).map(normalizeVocab);
-      const remoteGrammar = (gRes.data || []).map(normalizeGrammar);
+      const remoteVocab = (vRes.data || []).map(v => {
+        const n = normalizeVocab(v);
+        n._rawCat = safeStr(v.category); // preserve raw value from Sheets
+        return n;
+      });
+      const remoteGrammar = (gRes.data || []).map(g => {
+        const n = normalizeGrammar(g);
+        n._rawCat = safeStr(g.category);
+        return n;
+      });
 
       // 2. Deduplicate remote by word+lang — find which IDs to delete
       const keepV = _dedup(remoteVocab, 'vocab');
@@ -839,61 +847,71 @@ const syncManager = {
       const delVIds = remoteVocab.filter(v => !keepVIds.has(v.id)).map(v => v.id);
       const delGIds = remoteGrammar.filter(g => !keepGIds.has(g.id)).map(g => g.id);
 
-      // Delete duplicate rows from Sheets
-      const delOps = [];
-      delVIds.forEach(id => delOps.push(() => api.del('Vocabulary', id)));
-      delGIds.forEach(id => delOps.push(() => api.del('Grammar', id)));
-      for (let i = 0; i < delOps.length; i += 5) {
-        await Promise.all(delOps.slice(i, i + 5).map(fn => fn()));
+      // Delete duplicate rows from Sheets — ONE AT A TIME to avoid row-shift race conditions
+      for (const id of delVIds) {
+        try { await api.del('Vocabulary', id); } catch(e) {}
+      }
+      for (const id of delGIds) {
+        try { await api.del('Grammar', id); } catch(e) {}
       }
 
       // 3. Build local lookup by word+lang to find folder assignments
+      const realCat = (c, lang) => c && !isLangCodeCategory(c, lang);
       const localVocab = state.vocabulary.map(normalizeVocab);
       const localGrammar = state.grammar.map(normalizeGrammar);
       const localVByWord = {};
-      localVocab.forEach(v => { const k = (v.word + '|' + v.lang).toLowerCase(); if (!localVByWord[k] || v.category) localVByWord[k] = v; });
+      localVocab.forEach(v => { const k = (v.word + '|' + v.lang).toLowerCase(); if (!localVByWord[k] || realCat(v.category, v.lang)) localVByWord[k] = v; });
       const localGByWord = {};
-      localGrammar.forEach(g => { const k = (g.pattern + '|' + g.lang).toLowerCase(); if (!localGByWord[k] || g.category) localGByWord[k] = g; });
+      localGrammar.forEach(g => { const k = (g.pattern + '|' + g.lang).toLowerCase(); if (!localGByWord[k] || realCat(g.category, g.lang)) localGByWord[k] = g; });
 
       // 4. Update kept remote items: fix lang-code categories AND apply local folder names
-      const realCat = (c, lang) => c && !isLangCodeCategory(c, lang);
+      //    Key fix: check _rawCat (the ORIGINAL value in Sheets), not the normalized category
       const updateOps = [];
       keepV.forEach(v => {
         const k = (v.word + '|' + v.lang).toLowerCase();
         const local = localVByWord[k];
+        let newCat = v.category; // starts as normalized (empty if was lang code)
         let needsUpdate = false;
-        // If remote category is a lang code, clear it
-        if (v.category && isLangCodeCategory(v.category, v.lang)) {
-          v.category = '';
+        // If RAW Sheets category was a lang code, we need to push the fix
+        if (v._rawCat && isLangCodeCategory(v._rawCat, v.lang)) {
+          newCat = '';
           needsUpdate = true;
         }
         // Apply local folder name if local has a real one
-        if (local && realCat(local.category, local.lang) && local.category !== v.category) {
-          v.category = local.category;
+        if (local && realCat(local.category, local.lang)) {
+          newCat = local.category;
           needsUpdate = true;
         }
         if (needsUpdate) {
-          updateOps.push(() => api.update('Vocabulary', v.id, v));
+          v.category = newCat;
+          const clean = Object.assign({}, v);
+          delete clean._rawCat;
+          updateOps.push(() => api.update('Vocabulary', v.id, clean));
         }
       });
       keepG.forEach(g => {
         const k = (g.pattern + '|' + g.lang).toLowerCase();
         const local = localGByWord[k];
+        let newCat = g.category;
         let needsUpdate = false;
-        if (g.category && isLangCodeCategory(g.category, g.lang)) {
-          g.category = '';
+        if (g._rawCat && isLangCodeCategory(g._rawCat, g.lang)) {
+          newCat = '';
           needsUpdate = true;
         }
-        if (local && realCat(local.category, local.lang) && local.category !== g.category) {
-          g.category = local.category;
+        if (local && realCat(local.category, local.lang)) {
+          newCat = local.category;
           needsUpdate = true;
         }
         if (needsUpdate) {
-          updateOps.push(() => api.update('Grammar', g.id, g));
+          g.category = newCat;
+          const clean = Object.assign({}, g);
+          delete clean._rawCat;
+          updateOps.push(() => api.update('Grammar', g.id, clean));
         }
       });
-      for (let i = 0; i < updateOps.length; i += 5) {
-        await Promise.all(updateOps.slice(i, i + 5).map(fn => fn()));
+      // Run updates one at a time for reliability
+      for (const op of updateOps) {
+        try { await op(); } catch(e) {}
       }
 
       // Push langCategories config
