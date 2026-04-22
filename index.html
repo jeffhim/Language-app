@@ -820,115 +820,57 @@ const syncManager = {
     }
   },
 
-  // Sync & Clean: deduplicate Sheets, push local categories, pull back clean data
+  // Sync & Clean: wipe remote Sheets, re-upload clean local data
   async pushAll() {
     this.setState('saving');
     try {
       await api.init();
 
-      // 1. Read all remote data — keep RAW category for Sheets cleanup
+      // Strategy: local data is already clean (deduped, categories fixed).
+      // Wipe remote Sheets and re-upload everything from local.
+      // Uses POST for deletes (more reliable than GET through redirects).
+
+      // 1. Read all remote rows to get their IDs
       const [vRes, gRes] = await Promise.all([api.read('Vocabulary'), api.read('Grammar')]);
-      const remoteVocab = (vRes.data || []).map(v => {
-        const n = normalizeVocab(v);
-        n._rawCat = safeStr(v.category); // preserve raw value from Sheets
-        return n;
-      });
-      const remoteGrammar = (gRes.data || []).map(g => {
-        const n = normalizeGrammar(g);
-        n._rawCat = safeStr(g.category);
-        return n;
-      });
+      const remoteV = vRes.data || [];
+      const remoteG = gRes.data || [];
 
-      // 2. Deduplicate remote by word+lang — find which IDs to delete
-      const keepV = _dedup(remoteVocab, 'vocab');
-      const keepG = _dedup(remoteGrammar, 'grammar');
-      const keepVIds = new Set(keepV.map(v => v.id));
-      const keepGIds = new Set(keepG.map(g => g.id));
-      const delVIds = remoteVocab.filter(v => !keepVIds.has(v.id)).map(v => v.id);
-      const delGIds = remoteGrammar.filter(g => !keepGIds.has(g.id)).map(g => g.id);
-
-      // Delete duplicate rows from Sheets — ONE AT A TIME to avoid row-shift race conditions
-      for (const id of delVIds) {
-        try { await api.del('Vocabulary', id); } catch(e) {}
+      // 2. Delete ALL remote rows via POST (one at a time, most reliable)
+      let deleted = 0;
+      for (const v of remoteV) {
+        try {
+          await api.post({ action: 'delete', tab: 'Vocabulary', id: String(v.id) });
+          deleted++;
+        } catch(e) { console.log('Del V err: ' + (e.message || e)); }
       }
-      for (const id of delGIds) {
-        try { await api.del('Grammar', id); } catch(e) {}
+      for (const g of remoteG) {
+        try {
+          await api.post({ action: 'delete', tab: 'Grammar', id: String(g.id) });
+          deleted++;
+        } catch(e) { console.log('Del G err: ' + (e.message || e)); }
       }
 
-      // 3. Build local lookup by word+lang to find folder assignments
-      const realCat = (c, lang) => c && !isLangCodeCategory(c, lang);
-      const localVocab = state.vocabulary.map(normalizeVocab);
-      const localGrammar = state.grammar.map(normalizeGrammar);
-      const localVByWord = {};
-      localVocab.forEach(v => { const k = (v.word + '|' + v.lang).toLowerCase(); if (!localVByWord[k] || realCat(v.category, v.lang)) localVByWord[k] = v; });
-      const localGByWord = {};
-      localGrammar.forEach(g => { const k = (g.pattern + '|' + g.lang).toLowerCase(); if (!localGByWord[k] || realCat(g.category, g.lang)) localGByWord[k] = g; });
-
-      // 4. Update kept remote items: fix lang-code categories AND apply local folder names
-      //    Key fix: check _rawCat (the ORIGINAL value in Sheets), not the normalized category
-      const updateOps = [];
-      keepV.forEach(v => {
-        const k = (v.word + '|' + v.lang).toLowerCase();
-        const local = localVByWord[k];
-        let newCat = v.category; // starts as normalized (empty if was lang code)
-        let needsUpdate = false;
-        // If RAW Sheets category was a lang code, we need to push the fix
-        if (v._rawCat && isLangCodeCategory(v._rawCat, v.lang)) {
-          newCat = '';
-          needsUpdate = true;
-        }
-        // Apply local folder name if local has a real one
-        if (local && realCat(local.category, local.lang)) {
-          newCat = local.category;
-          needsUpdate = true;
-        }
-        if (needsUpdate) {
-          v.category = newCat;
-          const clean = Object.assign({}, v);
-          delete clean._rawCat;
-          updateOps.push(() => api.update('Vocabulary', v.id, clean));
-        }
-      });
-      keepG.forEach(g => {
-        const k = (g.pattern + '|' + g.lang).toLowerCase();
-        const local = localGByWord[k];
-        let newCat = g.category;
-        let needsUpdate = false;
-        if (g._rawCat && isLangCodeCategory(g._rawCat, g.lang)) {
-          newCat = '';
-          needsUpdate = true;
-        }
-        if (local && realCat(local.category, local.lang)) {
-          newCat = local.category;
-          needsUpdate = true;
-        }
-        if (needsUpdate) {
-          g.category = newCat;
-          const clean = Object.assign({}, g);
-          delete clean._rawCat;
-          updateOps.push(() => api.update('Grammar', g.id, clean));
-        }
-      });
-      // Run updates one at a time for reliability
-      for (const op of updateOps) {
-        try { await op(); } catch(e) {}
+      // 3. Re-add all local items (already clean)
+      let added = 0;
+      for (const v of state.vocabulary) {
+        try {
+          await api.add('Vocabulary', v);
+          added++;
+        } catch(e) { console.log('Add V err: ' + (e.message || e)); }
+      }
+      for (const g of state.grammar) {
+        try {
+          await api.add('Grammar', g);
+          added++;
+        } catch(e) { console.log('Add G err: ' + (e.message || e)); }
       }
 
-      // Push langCategories config
+      // 4. Push langCategories config
       try { await api.saveRemoteConfig('langCategories', state.config.langCategories || {}); } catch(e) {}
-
-      // 5. Pull back clean data from Sheets
-      const [vRes2, gRes2] = await Promise.all([api.read('Vocabulary'), api.read('Grammar')]);
-      state.vocabulary = _dedup((vRes2.data || []).map(normalizeVocab), 'vocab');
-      state.grammar = _dedup((gRes2.data || []).map(normalizeGrammar), 'grammar');
-      saveVocab();
-      saveGrammar();
 
       this.setState('saved');
       renderCurrentView();
-      const removed = delVIds.length + delGIds.length;
-      const updated = updateOps.length;
-      showToast('Removed ' + removed + ' duplicates, updated ' + updated + ' categories', 'success');
+      showToast('Cleaned Sheets: deleted ' + deleted + ' old rows, re-added ' + added + ' items', 'success');
     } catch(e) {
       console.log('Sync error: ' + (e.message || e));
       this.setState('error');
