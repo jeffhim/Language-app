@@ -1499,7 +1499,8 @@ function renderWords() {
               <div style="display:flex;justify-content:space-between;align-items:flex-start">
                 <div style="flex:1;min-width:0">
                   <div class="word">${esc(v.word)}</div>
-                  ${v.reading?`<div class="reading">${esc(v.reading)}</div>`:''}
+                  ${v.reading?`<div class="reading">${esc(v.reading)}${v.tone?` <span style="opacity:0.7;font-size:12px">[${esc(v.tone)}]</span>`:''}</div>`:''}
+                  ${!v.reading&&v.tone?`<div class="reading" style="font-size:12px;opacity:0.8">Tone: ${esc(v.tone)}</div>`:''}
                   ${v.article?`<span class="tag" style="font-size:11px;margin-top:3px">${esc(v.article)}</span>`:''}
                 </div>
                 <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
@@ -1813,6 +1814,7 @@ function showEditWordModal(id) {
     <form id="edit-word-form" onsubmit="handleEditWord(event,'${id}')">
       <div class="form-group"><label>Word</label><input id="ew-word" lang="${langAttr(v.lang)}" required value="${esc(v.word)}"></div>
       <div id="ew-extra-fields">${renderLangFields(v.lang,'ew')}</div>
+      <div class="form-group"><label>Tone / 聲調</label><input id="ew-tone" placeholder="e.g. 1, 2, 3, 4, 輕聲" style="font-size:16px" value="${esc(v.tone||'')}"></div>
       <div class="form-group"><label>Meaning</label><input id="ew-meaning" lang="zh" required value="${esc(v.meaning)}" placeholder="翻譯 / 意思"></div>
       <div class="form-group"><label>Example</label><textarea id="ew-example" lang="${langAttr(v.lang)}">${esc(v.example)}</textarea></div>
       <div class="form-group"><label>Folder</label>${renderCategorySelect('ew-category',v.category||'')}</div>
@@ -2221,8 +2223,14 @@ function renderQuiz() {
         <div class="form-row" style="margin-bottom:16px">
           <div class="form-group">
             <label>Language</label>
-            <select id="quiz-lang" onchange="state.quiz.lang=this.value">
+            <select id="quiz-lang" onchange="state.quiz.lang=this.value;updateQuizFolders()">
               ${langs.map(l=>`<option value="${l}" ${(state.quiz.lang===l||(state.quiz.lang!==l&&l===state.filter.lang))?'selected':''}>${langLabel(l)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Folder</label>
+            <select id="quiz-folder">
+              <option value="all">All Folders</option>
             </select>
           </div>
           <div class="form-group">
@@ -2239,6 +2247,8 @@ function renderQuiz() {
       `}
     </div>
   `;
+  // Populate folder dropdown after HTML is rendered
+  setTimeout(() => updateQuizFolders(), 0);
 }
 
 function selectQuizType(type) {
@@ -2600,13 +2610,19 @@ function saveAIConfig() {
 
 function showAddLanguagePrompt() {
   const available = Object.keys(LANGS).filter(l=>!(state.config.languages||[]).includes(l));
-  if(available.length===0){ showToast('All languages already added','info'); return; }
+  const hasPresets = available.length > 0;
   showModal(`
     <h2>Add Language</h2>
     <div class="form-group"><label>Select Language</label>
-      <select id="new-lang-select">
+      <select id="new-lang-select" onchange="document.getElementById('custom-lang-fields').style.display=this.value==='_custom'?'block':'none'">
         ${available.map(l=>`<option value="${l}">${langLabel(l)}</option>`).join('')}
+        <option value="_custom" ${!hasPresets?'selected':''}>✏️ Custom Language...</option>
       </select>
+    </div>
+    <div id="custom-lang-fields" style="display:${hasPresets?'none':'block'}">
+      <div class="form-group"><label>Language Code</label><input id="custom-lang-code" placeholder="e.g. yue, tl, sw" style="font-size:16px"></div>
+      <div class="form-group"><label>Language Name</label><input id="custom-lang-name" placeholder="e.g. Cantonese, Tagalog" style="font-size:16px"></div>
+      <div class="form-group"><label>Emoji (optional)</label><input id="custom-lang-emoji" placeholder="e.g. 🇭🇰" style="font-size:16px"></div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
