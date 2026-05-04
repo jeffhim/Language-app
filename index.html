@@ -820,6 +820,7 @@ const syncManager = {
       state.grammar = _mergeItems(localGrammar, remoteGrammar, 'grammar');
       saveVocab();
       saveGrammar();
+      dedupLocalState();
       this.setState('saved');
       renderCurrentView();
     } catch(e) {
@@ -833,6 +834,9 @@ const syncManager = {
   async pushAll() {
     this.setState('saving');
     try {
+      // Deduplicate local state first
+      const dupes = dedupLocalState();
+      if (dupes > 0) showToast('Removed ' + dupes + ' local duplicates', 'info');
       await api.init();
       const errors = [];
       const totalItems = state.vocabulary.length + state.grammar.length;
@@ -948,8 +952,8 @@ function normalizeGrammar(g) {
 // Keeps the version with the most data (prefers one with a folder/category).
 function _dedup(items, type) {
   const keyFn = type === 'vocab'
-    ? v => (v.word + '|' + v.lang).toLowerCase()
-    : g => (g.pattern + '|' + g.lang).toLowerCase();
+    ? v => ((v.word||'').trim() + '|' + (v.lang||'').trim()).toLowerCase()
+    : g => ((g.pattern||'').trim() + '|' + (g.lang||'').trim()).toLowerCase();
   const best = {};
   items.forEach(item => {
     const k = keyFn(item);
@@ -966,8 +970,8 @@ function _dedup(items, type) {
 // For matched items: keeps remote as base but fills in local category/fields if remote is empty.
 function _mergeItems(local, remote, type) {
   const keyFn = type === 'vocab'
-    ? v => (v.word + '|' + v.lang).toLowerCase()
-    : g => (g.pattern + '|' + g.lang).toLowerCase();
+    ? v => ((v.word||'').trim() + '|' + (v.lang||'').trim()).toLowerCase()
+    : g => ((g.pattern||'').trim() + '|' + (g.lang||'').trim()).toLowerCase();
   // Helper: is this a real folder name? (not empty, not a lang code)
   const realCat = (c, lang) => c && !isLangCodeCategory(c, lang);
   // Index local by word+lang key — prefer entries with real folder names
@@ -992,6 +996,32 @@ function _mergeItems(local, remote, type) {
   // Add local-only items not in remote
   local.forEach(item => { const k = keyFn(item); if (!merged[k]) merged[k] = item; });
   return Object.values(merged);
+}
+
+// Deduplicate local state by word+lang / pattern+lang
+function dedupLocalState() {
+  const seen = {};
+  let vDupes = 0, gDupes = 0;
+  const cleanV = [];
+  state.vocabulary.forEach(v => {
+    const k = ((v.word||'').trim() + '|' + (v.lang||'').trim()).toLowerCase();
+    if (!seen[k]) { seen[k] = true; cleanV.push(v); }
+    else vDupes++;
+  });
+  const seen2 = {};
+  const cleanG = [];
+  state.grammar.forEach(g => {
+    const k = ((g.pattern||'').trim() + '|' + (g.lang||'').trim()).toLowerCase();
+    if (!seen2[k]) { seen2[k] = true; cleanG.push(g); }
+    else gDupes++;
+  });
+  if (vDupes || gDupes) {
+    state.vocabulary = cleanV;
+    state.grammar = cleanG;
+    saveVocab();
+    saveGrammar();
+  }
+  return vDupes + gDupes;
 }
 
 // Helper: map view name to folder type key
@@ -2846,6 +2876,7 @@ function init() {
     }
   });
   if (cleaned) { saveVocab(); saveGrammar(); }
+  dedupLocalState();
   renderCurrentView();
   // Auto-pull from Google Sheets on load
   setTimeout(() => syncManager.pull(), 800);
