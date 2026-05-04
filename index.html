@@ -727,6 +727,7 @@ const api = {
     return this.post({action:'update', tab, id, data});
   },
   del(tab, id) { return this.req({action:'delete', tab, id}); },
+  clearAll(tab) { return this.req({action:'clearAll', tab}); },
   ping() { return this.req({action:'ping'}); },
   init() { return this.req({action:'init'}); },
   // Config sheet helpers for syncing settings (e.g. langCategories) across devices
@@ -828,73 +829,50 @@ const syncManager = {
     }
   },
 
-  // Sync & Clean: wipe remote Sheets via GET, re-upload clean local data
+  // Sync & Clean: clearAll (1 request per tab) + parallel batch re-upload
   async pushAll() {
     this.setState('saving');
     try {
       await api.init();
+      const errors = [];
+      const totalItems = state.vocabulary.length + state.grammar.length;
+      const BATCH = 5; // parallel requests per batch
 
-      // Strategy: local data is already clean (deduped, categories fixed).
-      // Wipe remote Sheets and re-upload everything from local.
-      // MUST use GET (api.del / api.req) — NOT POST!
-      // Google Apps Script 302-redirects POST→GET, losing the request body.
+      // 1. Clear both sheets in parallel (2 requests instead of N deletes)
+      showToast('Clearing Sheets...', 'info');
+      const [clearV, clearG] = await Promise.all([
+        api.clearAll('Vocabulary').catch(e => ({ error: e.message || e })),
+        api.clearAll('Grammar').catch(e => ({ error: e.message || e }))
+      ]);
+      if (clearV.error) errors.push('clearV:' + clearV.error);
+      if (clearG.error) errors.push('clearG:' + clearG.error);
 
-      // 1. Read all remote rows to get their IDs
-      const [vRes, gRes] = await Promise.all([api.read('Vocabulary'), api.read('Grammar')]);
-      const remoteV = vRes.data || [];
-      const remoteG = gRes.data || [];
-      const totalOps = remoteV.length + remoteG.length + state.vocabulary.length + state.grammar.length;
-      let done = 0;
-      let errors = [];
-
-      // 2. Delete ALL remote rows via GET (one at a time)
-      let deleted = 0;
-      for (const v of remoteV) {
-        try {
-          const res = await api.del('Vocabulary', String(v.id));
-          if (res && res.ok) deleted++;
-          else if (res && res.error) errors.push('del:' + res.error);
-        } catch(e) { errors.push('del:' + (e.message || e)); }
-        done++;
-        showToast('Cleaning Sheets... ' + done + '/' + totalOps, 'info');
-      }
-      for (const g of remoteG) {
-        try {
-          const res = await api.del('Grammar', String(g.id));
-          if (res && res.ok) deleted++;
-          else if (res && res.error) errors.push('del:' + res.error);
-        } catch(e) { errors.push('del:' + (e.message || e)); }
-        done++;
-        showToast('Cleaning Sheets... ' + done + '/' + totalOps, 'info');
-      }
-
-      // 3. Re-add all local items (already clean, with correct categories)
+      // 2. Re-add all local items in parallel batches of BATCH
       let added = 0;
-      for (const v of state.vocabulary) {
-        try {
-          await api.add('Vocabulary', v);
-          added++;
-        } catch(e) { errors.push('add:' + (e.message || e)); }
-        done++;
-        showToast('Re-uploading... ' + done + '/' + totalOps, 'info');
-      }
-      for (const g of state.grammar) {
-        try {
-          await api.add('Grammar', g);
-          added++;
-        } catch(e) { errors.push('add:' + (e.message || e)); }
-        done++;
-        showToast('Re-uploading... ' + done + '/' + totalOps, 'info');
+      const allItems = [
+        ...state.vocabulary.map(v => ({ tab: 'Vocabulary', data: v })),
+        ...state.grammar.map(g => ({ tab: 'Grammar', data: g }))
+      ];
+      for (let i = 0; i < allItems.length; i += BATCH) {
+        const batch = allItems.slice(i, i + BATCH);
+        const results = await Promise.all(batch.map(item =>
+          api.add(item.tab, item.data).catch(e => ({ error: e.message || e }))
+        ));
+        results.forEach(r => {
+          if (r && r.error) errors.push('add:' + r.error);
+          else added++;
+        });
+        showToast('Uploading... ' + Math.min(i + BATCH, allItems.length) + '/' + totalItems, 'info');
       }
 
-      // 4. Push langCategories config
+      // 3. Push langCategories config
       try { await api.saveRemoteConfig('langCategories', state.config.langCategories || {}); } catch(e) {}
 
       this.setState('saved');
       renderCurrentView();
-      const msg = 'Deleted ' + deleted + '/' + remoteV.length + ' rows, re-added ' + added + ' items';
+      const msg = 'Synced ' + added + '/' + totalItems + ' items';
       if (errors.length > 0) {
-        showToast(msg + ' (' + errors.length + ' errors: ' + errors.slice(0,3).join('; ') + ')', 'warning');
+        showToast(msg + ' (' + errors.length + ' errors)', 'warning');
       } else {
         showToast(msg + ' ✓', 'success');
       }
