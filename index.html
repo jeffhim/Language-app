@@ -341,7 +341,9 @@ a{color:var(--accent);text-decoration:none}
 .item-card .example{
   font-size:13px;color:var(--text-2);margin-top:6px;padding:8px 10px;
   background:var(--bg-0);border-radius:var(--radius-sm);border-left:3px solid var(--accent);
+  white-space:pre-line;line-height:1.6;
 }
+.item-card .meaning{white-space:pre-line}
 
 /* FAB */
 .fab{
@@ -456,8 +458,8 @@ a{color:var(--accent);text-decoration:none}
 .swipe-card .sc-reading{font-family:var(--font-mono);font-size:15px;color:var(--accent);margin-top:6px}
 .swipe-card .sc-tone{font-size:13px;color:var(--text-2);margin-top:2px}
 .swipe-card .sc-divider{width:40px;height:2px;background:var(--accent);opacity:0.4;margin:14px 0;border-radius:1px}
-.swipe-card .sc-meaning{font-size:17px;color:var(--text-1);line-height:1.5;font-weight:600}
-.swipe-card .sc-example{font-size:13px;color:var(--text-2);margin-top:10px;font-style:italic}
+.swipe-card .sc-meaning{font-size:17px;color:var(--text-1);line-height:1.5;font-weight:600;white-space:pre-line}
+.swipe-card .sc-example{font-size:13px;color:var(--text-2);margin-top:10px;font-style:italic;white-space:pre-line;line-height:1.6}
 .swipe-hint{display:flex;justify-content:space-between;align-items:center;padding:4px 8px;margin-bottom:10px;font-size:12px;color:var(--text-2)}
 .swipe-hint span{display:flex;align-items:center;gap:4px;opacity:0.7}
 .swipe-hint .hint-left{color:#FF4757}
@@ -1833,6 +1835,7 @@ function handleAddWord(e) {
     id: uid(), lang,
     word: document.getElementById('aw-word').value.trim(),
     reading: (document.getElementById('aw-reading')||{}).value||'',
+    tone: (document.getElementById('aw-tone')||{}).value||'',
     article: (document.getElementById('aw-article')||{}).value||'',
     plural: (document.getElementById('aw-plural')||{}).value||'',
     meaning: document.getElementById('aw-meaning').value.trim(),
