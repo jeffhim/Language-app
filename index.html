@@ -182,6 +182,19 @@ a{color:var(--accent);text-decoration:none}
 .form-row{display:flex;gap:10px}
 .form-row .form-group{flex:1}
 
+/* Tone toggles */
+.tone-toggles{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+.tone-toggle{
+  min-width:40px;height:36px;border-radius:var(--radius-sm);border:2px solid var(--border);
+  background:var(--bg-0);color:var(--text-1);font-size:15px;font-weight:700;
+  cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;
+  padding:0 10px;font-family:'Quicksand',sans-serif;
+}
+.tone-toggle:hover{border-color:var(--accent);background:var(--accent-glow)}
+.tone-toggle.active{background:var(--accent);color:#fff;border-color:var(--accent);box-shadow:0 2px 8px var(--accent-glow)}
+.tone-input-row{display:flex;align-items:center;gap:8px}
+.tone-input-row input{flex:1}
+
 /* Tags */
 .tag{
   display:inline-flex;align-items:center;gap:4px;
@@ -1798,7 +1811,16 @@ function showAddWordModal() {
     <form id="add-word-form" onsubmit="handleAddWord(event)">
       <div class="form-group"><label>Word / Expression</label><input id="aw-word" required placeholder="Enter word" lang="${la}"></div>
       <div id="aw-extra-fields">${renderLangFields(lang,'aw')}</div>
-      <div class="form-group"><label>Tone / 聲調</label><input id="aw-tone" placeholder="e.g. 1, 2, 3, 4, 輕聲" style="font-size:16px"></div>
+      <div class="form-group"><label>Tone / 聲調</label>
+        <div class="tone-toggles" id="aw-tone-toggles">
+          <button type="button" class="tone-toggle" data-tone="1" onclick="toggleTone(this,'aw-tone')">1</button>
+          <button type="button" class="tone-toggle" data-tone="2" onclick="toggleTone(this,'aw-tone')">2</button>
+          <button type="button" class="tone-toggle" data-tone="3" onclick="toggleTone(this,'aw-tone')">3</button>
+          <button type="button" class="tone-toggle" data-tone="4" onclick="toggleTone(this,'aw-tone')">4</button>
+          <button type="button" class="tone-toggle" data-tone="5" onclick="toggleTone(this,'aw-tone')">5</button>
+        </div>
+        <div class="tone-input-row"><input id="aw-tone" placeholder="或自由填寫，例如：輕聲、陽平…" style="font-size:16px"></div>
+      </div>
       <div class="form-group"><label>Meaning</label><input id="aw-meaning" required placeholder="翻譯 / 意思" lang="zh"></div>
       <div class="form-group"><label>Example Sentence</label><textarea id="aw-example" placeholder="Optional example sentence" lang="${la}"></textarea></div>
       <div class="form-group"><label>Folder</label>${renderCategorySelect('aw-category',currentFolder)}</div>
@@ -1826,6 +1848,39 @@ function updateWordFields(lang) {
   const el = document.getElementById('aw-extra-fields') || document.getElementById('ew-extra-fields');
   const prefix = document.getElementById('aw-extra-fields') ? 'aw' : 'ew';
   if(el) el.innerHTML = renderLangFields(lang, prefix);
+}
+
+function toggleTone(btn, inputId) {
+  const input = document.getElementById(inputId);
+  const tone = btn.dataset.tone;
+  const container = btn.parentElement;
+  const wasActive = btn.classList.contains('active');
+  // Deactivate all toggles in same group
+  container.querySelectorAll('.tone-toggle').forEach(b => b.classList.remove('active'));
+  if (wasActive) {
+    // If same button clicked again, deselect — clear only if input matches the tone number
+    if (input && input.value === tone) input.value = '';
+  } else {
+    btn.classList.add('active');
+    if (input) input.value = tone;
+  }
+}
+
+function syncToneToggles(toggleContainerId, inputId) {
+  const input = document.getElementById(inputId);
+  const container = document.getElementById(toggleContainerId);
+  if (!input || !container) return;
+  const val = input.value.trim();
+  container.querySelectorAll('.tone-toggle').forEach(b => {
+    b.classList.toggle('active', b.dataset.tone === val);
+  });
+  // When user types in the input, update toggle highlights
+  input.addEventListener('input', () => {
+    const v = input.value.trim();
+    container.querySelectorAll('.tone-toggle').forEach(b => {
+      b.classList.toggle('active', b.dataset.tone === v);
+    });
+  });
 }
 
 function handleAddWord(e) {
@@ -1861,7 +1916,16 @@ function showEditWordModal(id) {
     <form id="edit-word-form" onsubmit="handleEditWord(event,'${id}')">
       <div class="form-group"><label>Word</label><input id="ew-word" lang="${langAttr(v.lang)}" required value="${esc(v.word)}"></div>
       <div id="ew-extra-fields">${renderLangFields(v.lang,'ew')}</div>
-      <div class="form-group"><label>Tone / 聲調</label><input id="ew-tone" placeholder="e.g. 1, 2, 3, 4, 輕聲" style="font-size:16px" value="${esc(v.tone||'')}"></div>
+      <div class="form-group"><label>Tone / 聲調</label>
+        <div class="tone-toggles" id="ew-tone-toggles">
+          <button type="button" class="tone-toggle" data-tone="1" onclick="toggleTone(this,'ew-tone')">1</button>
+          <button type="button" class="tone-toggle" data-tone="2" onclick="toggleTone(this,'ew-tone')">2</button>
+          <button type="button" class="tone-toggle" data-tone="3" onclick="toggleTone(this,'ew-tone')">3</button>
+          <button type="button" class="tone-toggle" data-tone="4" onclick="toggleTone(this,'ew-tone')">4</button>
+          <button type="button" class="tone-toggle" data-tone="5" onclick="toggleTone(this,'ew-tone')">5</button>
+        </div>
+        <div class="tone-input-row"><input id="ew-tone" placeholder="或自由填寫，例如：輕聲、陽平…" style="font-size:16px" value="${esc(v.tone||'')}"></div>
+      </div>
       <div class="form-group"><label>Meaning</label><input id="ew-meaning" lang="zh" required value="${esc(v.meaning)}" placeholder="翻譯 / 意思"></div>
       <div class="form-group"><label>Example</label><textarea id="ew-example" lang="${langAttr(v.lang)}">${esc(v.example)}</textarea></div>
       <div class="form-group"><label>Folder</label>${renderCategorySelect('ew-category',v.category||'')}</div>
@@ -1878,6 +1942,7 @@ function showEditWordModal(id) {
     const re = document.getElementById('ew-reading'); if(re) re.value = v.reading||'';
     const ar = document.getElementById('ew-article'); if(ar) ar.value = v.article||'';
     const pl = document.getElementById('ew-plural'); if(pl) pl.value = v.plural||'';
+    syncToneToggles('ew-tone-toggles','ew-tone');
   },50);
 }
 
