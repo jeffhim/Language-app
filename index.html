@@ -1813,6 +1813,7 @@ function showAddWordModal() {
       <div id="aw-extra-fields">${renderLangFields(lang,'aw')}</div>
       <div class="form-group"><label>Tone / 聲調</label>
         <div class="tone-toggles" id="aw-tone-toggles">
+          <button type="button" class="tone-toggle" data-tone="0" onclick="toggleTone(this,'aw-tone')">0</button>
           <button type="button" class="tone-toggle" data-tone="1" onclick="toggleTone(this,'aw-tone')">1</button>
           <button type="button" class="tone-toggle" data-tone="2" onclick="toggleTone(this,'aw-tone')">2</button>
           <button type="button" class="tone-toggle" data-tone="3" onclick="toggleTone(this,'aw-tone')">3</button>
@@ -1853,16 +1854,21 @@ function updateWordFields(lang) {
 function toggleTone(btn, inputId) {
   const input = document.getElementById(inputId);
   const tone = btn.dataset.tone;
-  const container = btn.parentElement;
   const wasActive = btn.classList.contains('active');
-  // Deactivate all toggles in same group
-  container.querySelectorAll('.tone-toggle').forEach(b => b.classList.remove('active'));
   if (wasActive) {
-    // If same button clicked again, deselect — clear only if input matches the tone number
-    if (input && input.value === tone) input.value = '';
+    // Remove this tone from the sequence
+    btn.classList.remove('active');
+    if (input) {
+      const parts = input.value.split(',').map(s => s.trim()).filter(s => s !== tone);
+      input.value = parts.join(', ');
+    }
   } else {
+    // Append this tone to the sequence (preserves click order)
     btn.classList.add('active');
-    if (input) input.value = tone;
+    if (input) {
+      const cur = input.value.trim();
+      input.value = cur ? cur + ', ' + tone : tone;
+    }
   }
 }
 
@@ -1870,15 +1876,15 @@ function syncToneToggles(toggleContainerId, inputId) {
   const input = document.getElementById(inputId);
   const container = document.getElementById(toggleContainerId);
   if (!input || !container) return;
-  const val = input.value.trim();
+  const parts = input.value.split(',').map(s => s.trim()).filter(Boolean);
   container.querySelectorAll('.tone-toggle').forEach(b => {
-    b.classList.toggle('active', b.dataset.tone === val);
+    b.classList.toggle('active', parts.includes(b.dataset.tone));
   });
   // When user types in the input, update toggle highlights
   input.addEventListener('input', () => {
-    const v = input.value.trim();
+    const ps = input.value.split(',').map(s => s.trim()).filter(Boolean);
     container.querySelectorAll('.tone-toggle').forEach(b => {
-      b.classList.toggle('active', b.dataset.tone === v);
+      b.classList.toggle('active', ps.includes(b.dataset.tone));
     });
   });
 }
@@ -1918,6 +1924,7 @@ function showEditWordModal(id) {
       <div id="ew-extra-fields">${renderLangFields(v.lang,'ew')}</div>
       <div class="form-group"><label>Tone / 聲調</label>
         <div class="tone-toggles" id="ew-tone-toggles">
+          <button type="button" class="tone-toggle" data-tone="0" onclick="toggleTone(this,'ew-tone')">0</button>
           <button type="button" class="tone-toggle" data-tone="1" onclick="toggleTone(this,'ew-tone')">1</button>
           <button type="button" class="tone-toggle" data-tone="2" onclick="toggleTone(this,'ew-tone')">2</button>
           <button type="button" class="tone-toggle" data-tone="3" onclick="toggleTone(this,'ew-tone')">3</button>
