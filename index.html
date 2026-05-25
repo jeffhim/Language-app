@@ -653,7 +653,7 @@ const LANGS = {
     {key:'reading',label:'Reading (読み)',placeholder:'ひらがな / カタカナ',type:'text'},
   ]},
   de:{emoji:'🇩🇪',name:'Deutsch',label:'German',fields:[
-    {key:'article',label:'Article',placeholder:'',type:'select',options:['','der','die','das']},
+    {key:'article',label:'Article',type:'toggles',options:['der','die','das']},
     {key:'plural',label:'Plural',placeholder:'Plural form',type:'text'},
   ]},
   zh:{emoji:'🇨🇳',name:'中文',label:'Chinese',fields:[
@@ -665,6 +665,7 @@ const LANGS = {
   it:{emoji:'🇮🇹',name:'Italiano',label:'Italian',fields:[]},
   pt:{emoji:'🇵🇹',name:'Português',label:'Portuguese',fields:[]},
   ru:{emoji:'🇷🇺',name:'Русский',label:'Russian',fields:[]},
+  cs:{emoji:'🇨🇿',name:'Čeština',label:'Czech',fields:[]},
 };
 
 const QUIZ_TYPES = [
@@ -1811,7 +1812,7 @@ function showAddWordModal() {
     <form id="add-word-form" onsubmit="handleAddWord(event)">
       <div class="form-group"><label>Word / Expression</label><input id="aw-word" required placeholder="Enter word" lang="${la}"></div>
       <div id="aw-extra-fields">${renderLangFields(lang,'aw')}</div>
-      <div class="form-group"><label>Tone / 聲調</label>
+      ${lang!=='de'?`<div class="form-group"><label>Tone / 聲調</label>
         <div class="tone-toggles" id="aw-tone-toggles">
           <button type="button" class="tone-toggle" data-tone="0" onclick="toggleTone(this,'aw-tone')">0</button>
           <button type="button" class="tone-toggle" data-tone="1" onclick="toggleTone(this,'aw-tone')">1</button>
@@ -1821,7 +1822,7 @@ function showAddWordModal() {
           <button type="button" class="tone-toggle" data-tone="5" onclick="toggleTone(this,'aw-tone')">5</button>
         </div>
         <div class="tone-input-row"><input id="aw-tone" placeholder="或自由填寫，例如：輕聲、陽平…" style="font-size:16px"></div>
-      </div>
+      </div>`:''}
       <div class="form-group"><label>Meaning</label><input id="aw-meaning" required placeholder="翻譯 / 意思" lang="zh"></div>
       <div class="form-group"><label>Example Sentence</label><textarea id="aw-example" placeholder="Optional example sentence" lang="${la}"></textarea></div>
       <div class="form-group"><label>Folder</label>${renderCategorySelect('aw-category',currentFolder)}</div>
@@ -1838,11 +1839,47 @@ function renderLangFields(lang, prefix) {
   const def = LANGS[lang];
   if(!def || !def.fields || def.fields.length===0) return '';
   return def.fields.map(f=>{
+    if(f.type==='toggles'){
+      return `<div class="form-group"><label>${f.label}</label>
+        <input type="hidden" id="${prefix}-${f.key}" value="">
+        <div class="tone-toggles" id="${prefix}-${f.key}-toggles">
+          ${f.options.map(o=>`<button type="button" class="tone-toggle" data-val="${o}" onclick="toggleArticle(this,'${prefix}-${f.key}')">${o}</button>`).join('')}
+        </div></div>`;
+    }
     if(f.type==='select'){
       return `<div class="form-group"><label>${f.label}</label><select id="${prefix}-${f.key}">${f.options.map(o=>`<option value="${o}">${o||'—'}</option>`).join('')}</select></div>`;
     }
     return `<div class="form-group"><label>${f.label}</label><input id="${prefix}-${f.key}" placeholder="${f.placeholder||''}" type="text"></div>`;
   }).join('');
+}
+
+function toggleArticle(btn, inputId) {
+  const input = document.getElementById(inputId);
+  const val = btn.dataset.val;
+  const container = btn.parentElement;
+  const wasActive = btn.classList.contains('active');
+  container.querySelectorAll('.tone-toggle').forEach(b => b.classList.remove('active'));
+  if (wasActive) {
+    if (input) input.value = '';
+  } else {
+    btn.classList.add('active');
+    if (input) input.value = val;
+  }
+}
+
+function syncArticleToggles(prefix) {
+  const langs = LANGS[state.filter.lang] || LANGS[state.vocabulary.find(v=>v.id)?.lang];
+  if (!langs) return;
+  (langs.fields||[]).forEach(f => {
+    if (f.type !== 'toggles') return;
+    const input = document.getElementById(prefix + '-' + f.key);
+    const container = document.getElementById(prefix + '-' + f.key + '-toggles');
+    if (!input || !container) return;
+    const val = input.value.trim();
+    container.querySelectorAll('.tone-toggle').forEach(b => {
+      b.classList.toggle('active', b.dataset.val === val);
+    });
+  });
 }
 
 function updateWordFields(lang) {
@@ -1922,7 +1959,7 @@ function showEditWordModal(id) {
     <form id="edit-word-form" onsubmit="handleEditWord(event,'${id}')">
       <div class="form-group"><label>Word</label><input id="ew-word" lang="${langAttr(v.lang)}" required value="${esc(v.word)}"></div>
       <div id="ew-extra-fields">${renderLangFields(v.lang,'ew')}</div>
-      <div class="form-group"><label>Tone / 聲調</label>
+      ${v.lang!=='de'?`<div class="form-group"><label>Tone / 聲調</label>
         <div class="tone-toggles" id="ew-tone-toggles">
           <button type="button" class="tone-toggle" data-tone="0" onclick="toggleTone(this,'ew-tone')">0</button>
           <button type="button" class="tone-toggle" data-tone="1" onclick="toggleTone(this,'ew-tone')">1</button>
@@ -1932,7 +1969,7 @@ function showEditWordModal(id) {
           <button type="button" class="tone-toggle" data-tone="5" onclick="toggleTone(this,'ew-tone')">5</button>
         </div>
         <div class="tone-input-row"><input id="ew-tone" placeholder="或自由填寫，例如：輕聲、陽平…" style="font-size:16px" value="${esc(v.tone||'')}"></div>
-      </div>
+      </div>`:''}
       <div class="form-group"><label>Meaning</label><input id="ew-meaning" lang="zh" required value="${esc(v.meaning)}" placeholder="翻譯 / 意思"></div>
       <div class="form-group"><label>Example</label><textarea id="ew-example" lang="${langAttr(v.lang)}">${esc(v.example)}</textarea></div>
       <div class="form-group"><label>Folder</label>${renderCategorySelect('ew-category',v.category||'')}</div>
@@ -1949,6 +1986,7 @@ function showEditWordModal(id) {
     const re = document.getElementById('ew-reading'); if(re) re.value = v.reading||'';
     const ar = document.getElementById('ew-article'); if(ar) ar.value = v.article||'';
     const pl = document.getElementById('ew-plural'); if(pl) pl.value = v.plural||'';
+    syncArticleToggles('ew');
     syncToneToggles('ew-tone-toggles','ew-tone');
   },50);
 }
@@ -1960,7 +1998,7 @@ function handleEditWord(e, id) {
   const v = state.vocabulary[idx];
   v.word = document.getElementById('ew-word').value.trim();
   v.reading = (document.getElementById('ew-reading')||{}).value||'';
-  v.tone = document.getElementById('ew-tone') ? document.getElementById('ew-tone').value.trim() : '';
+  v.tone = (document.getElementById('ew-tone')||{}).value||'';
   v.article = (document.getElementById('ew-article')||{}).value||'';
   v.plural = (document.getElementById('ew-plural')||{}).value||'';
   v.meaning = document.getElementById('ew-meaning').value.trim();
