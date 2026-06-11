@@ -672,6 +672,7 @@ const QUIZ_TYPES = [
   {id:'mc-meaning',name:'Meaning',desc:'Pick the correct meaning',icon:'fa-circle-check'},
   {id:'mc-word',name:'Word',desc:'Pick the correct word',icon:'fa-pen-fancy'},
   {id:'type-answer',name:'Type It',desc:'Type the meaning',icon:'fa-keyboard'},
+  {id:'type-word',name:'Spell It',desc:'See meaning, type the word',icon:'fa-pencil'},
   {id:'flashcard',name:'Flashcard',desc:'Flip & rate yourself',icon:'fa-clone'},
   {id:'de-article',name:'der/die/das',desc:'German article quiz',icon:'fa-venus-mars',langOnly:'de'},
   {id:'ja-reading',name:'Reading',desc:'Type the reading',icon:'fa-spell-check',langOnly:'ja'},
@@ -2436,7 +2437,7 @@ function startQuiz(type, lang, count, dueOnly, folder) {
   if(type==='de-article') pool = pool.filter(v=>v.lang==='de' && v.article);
   if(type==='ja-reading') pool = pool.filter(v=>v.lang==='ja' && v.reading);
 
-  if(pool.length < (type==='flashcard'||type==='type-answer'||type==='ja-reading'?1:4)){
+  if(pool.length < (type==='flashcard'||type==='type-answer'||type==='type-word'||type==='ja-reading'?1:4)){
     showToast('Not enough items for this quiz type','error');
     return;
   }
@@ -2483,6 +2484,9 @@ function createQuestion(type, item, pool) {
     }
     case 'type-answer': {
       return {type:'type', item, question:item.word, questionSub:item.reading||'', prompt:'Type the meaning', answer:item.meaning};
+    }
+    case 'type-word': {
+      return {type:'type', item, question:item.meaning, questionSub:item.example||'', prompt:'Type the word', answer:item.word};
     }
     case 'de-article': {
       return {type:'mc', item, question:item.word, questionSub:item.meaning, prompt:'Which article?', options:['der','die','das'], answer:item.article};
