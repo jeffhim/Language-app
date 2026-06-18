@@ -195,6 +195,26 @@ a{color:var(--accent);text-decoration:none}
 .tone-input-row{display:flex;align-items:center;gap:8px}
 .tone-input-row input{flex:1}
 
+/* Move-to-folder button on cards */
+.btn-move-folder{
+  background:none;border:none;color:var(--text-2);font-size:15px;
+  padding:4px 6px;cursor:pointer;border-radius:var(--radius-sm);
+  transition:all .2s;flex-shrink:0;margin-left:6px;
+}
+.btn-move-folder:hover,.btn-move-folder:active{color:var(--accent);background:var(--accent-glow)}
+
+/* Move-to-folder picker */
+.move-folder-list{list-style:none;padding:0;margin:8px 0 0;max-height:50vh;overflow-y:auto}
+.move-folder-list li{
+  padding:12px 14px;border-radius:var(--radius-sm);cursor:pointer;
+  display:flex;align-items:center;gap:10px;font-size:15px;font-weight:600;
+  color:var(--text-0);transition:background .15s;
+}
+.move-folder-list li:hover,.move-folder-list li:active{background:var(--bg-1)}
+.move-folder-list li.current{color:var(--accent);background:var(--accent-glow)}
+.move-folder-list li i{width:20px;text-align:center;font-size:14px;color:var(--text-2)}
+.move-folder-list li.current i{color:var(--accent)}
+
 /* Tags */
 .tag{
   display:inline-flex;align-items:center;gap:4px;
@@ -1581,14 +1601,11 @@ function renderWords() {
                   ${!v.reading&&v.tone?`<div class="reading" style="font-size:12px;opacity:0.8">Tone: ${esc(v.tone)}</div>`:''}
                   ${v.article?`<span class="tag" style="font-size:11px;margin-top:3px">${esc(v.article)}</span>`:''}
                 </div>
-                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-
-                </div>
+                <button class="btn-move-folder" onclick="event.stopPropagation();showMoveToFolder('${v.id}','vocab')" title="Move to folder"><i class="fas fa-folder-arrow-down"></i></button>
               </div>
               <div class="meaning">${esc(v.meaning)}</div>
               ${v.example?`<div class="example">${esc(v.example)}</div>`:''}
               <div class="meta">
-
                 ${v.nextReview?`<span style="font-size:11px;color:var(--text-2)"><i class="fas fa-clock"></i> ${formatDate(v.nextReview)}</span>`:''}
               </div>
             </div>
@@ -1630,6 +1647,53 @@ function closeFolder() {
   state.filter.openFolder = null;
   state.filter.search = '';
   renderCurrentView();
+}
+
+function showMoveToFolder(id, type) {
+  const isVocab = type === 'vocab';
+  const item = isVocab
+    ? state.vocabulary.find(v => v.id === id)
+    : state.grammar.find(g => g.id === id);
+  if (!item) return;
+  const lang = item.lang || state.filter.lang;
+  const cats = getUsedCategories(lang, isVocab ? 'vocab' : 'grammar');
+  const currentCat = item.category || '';
+  const itemLabel = isVocab ? (item.word || '') : (item.pattern || '');
+
+  showModal(`
+    <h2 style="font-size:18px"><i class="fas fa-folder-arrow-down" style="color:var(--accent)"></i> Move "${esc(itemLabel)}"</h2>
+    <ul class="move-folder-list">
+      <li class="${!currentCat?'current':''}" onclick="doMoveToFolder('${id}','${type}','')">
+        <i class="fas fa-folder-open"></i> Unfiled
+        ${!currentCat?'<span style="margin-left:auto;font-size:12px;opacity:0.6">current</span>':''}
+      </li>
+      ${cats.map(c => `<li class="${c===currentCat?'current':''}" onclick="doMoveToFolder('${id}','${type}','${esc(c)}')">
+        <i class="fas fa-folder"></i> ${esc(c)}
+        ${c===currentCat?'<span style="margin-left:auto;font-size:12px;opacity:0.6">current</span>':''}
+      </li>`).join('')}
+    </ul>
+    <div style="margin-top:12px">
+      <button class="btn btn-secondary btn-block btn-sm" onclick="closeModal()">Cancel</button>
+    </div>
+  `);
+}
+
+function doMoveToFolder(id, type, newFolder) {
+  const isVocab = type === 'vocab';
+  const arr = isVocab ? state.vocabulary : state.grammar;
+  const idx = arr.findIndex(x => x.id === id);
+  if (idx < 0) return;
+  const item = arr[idx];
+  const oldFolder = item.category || '';
+  if (newFolder === oldFolder) { closeModal(); return; }
+  item.category = newFolder;
+  if (isVocab) saveVocab(); else saveGrammar();
+  closeModal();
+  const label = newFolder || 'Unfiled';
+  showToast('Moved to ' + label, 'success');
+  renderCurrentView();
+  const tab = isVocab ? 'Vocabulary' : 'Grammar';
+  syncManager.push(() => api.update(tab, id, item), 'move to folder');
 }
 
 function showCreateFolderPrompt(view) {
@@ -2118,8 +2182,8 @@ function renderGrammar() {
           filtered.map((g,i)=>`
             <div class="item-card stagger" style="animation-delay:${Math.min(i*0.03,0.5)}s" onclick="showEditGrammarModal('${g.id}')">
               <div style="display:flex;justify-content:space-between;align-items:flex-start">
-                <div class="word" style="font-size:18px">${esc(g.pattern)}</div>
-
+                <div class="word" style="font-size:18px;flex:1;min-width:0">${esc(g.pattern)}</div>
+                <button class="btn-move-folder" onclick="event.stopPropagation();showMoveToFolder('${g.id}','grammar')" title="Move to folder"><i class="fas fa-folder-arrow-down"></i></button>
               </div>
               <div class="meaning" style="margin-top:6px">${esc(g.explanation).substring(0,100)}${g.explanation.length>100?'...':''}</div>
               ${g.examples?`<div class="example">${esc(g.examples).substring(0,120)}</div>`:''}
