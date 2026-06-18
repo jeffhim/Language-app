@@ -1880,8 +1880,14 @@ function deleteFolder(name, view) {
   renderCurrentView();
 }
 
-const setSearch = debounce(val=>{ state.filter.search=val; renderWords(); }, 250);
-const setWordFolderSearch = debounce(val=>{ state.filter.search=val; renderWords(); }, 250);
+function refocusSearch(containerEl) {
+  setTimeout(() => {
+    const inp = containerEl.querySelector('.search-wrap input[type="search"]');
+    if (inp) { inp.focus(); inp.selectionStart = inp.selectionEnd = inp.value.length; }
+  }, 0);
+}
+const setSearch = debounce(val=>{ state.filter.search=val; renderWords(); refocusSearch(document.getElementById('view-words')); }, 250);
+const setWordFolderSearch = debounce(val=>{ state.filter.search=val; renderWords(); refocusSearch(document.getElementById('view-words')); }, 250);
 
 const LANG_ATTR_MAP = { ja:'ja', de:'de', zh:'zh', ko:'ko', fr:'fr', es:'es', it:'it', pt:'pt', ru:'ru' };
 function langAttr(code) { return LANG_ATTR_MAP[code] || code || 'en'; }
@@ -2212,8 +2218,8 @@ function getFilteredGrammar() {
   return arr.sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
 }
 
-const setGramSearch=debounce(v=>{state.filter.search=v;renderGrammar();},250);
-const setGramFolderSearch=debounce(v=>{state.filter.search=v;renderGrammar();},250);
+const setGramSearch=debounce(v=>{state.filter.search=v;renderGrammar();refocusSearch(document.getElementById('view-grammar'));},250);
+const setGramFolderSearch=debounce(v=>{state.filter.search=v;renderGrammar();refocusSearch(document.getElementById('view-grammar'));},250);
 
 function showAddGrammarModal() {
   const currentFolder = state.filter.openFolder && state.filter.openFolder !== '__uncat' ? state.filter.openFolder : '';
