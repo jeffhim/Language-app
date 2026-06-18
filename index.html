@@ -1514,103 +1514,118 @@ function showDashDetail(type, item) {
 /* ============================================================
    WORDS VIEW
    ============================================================ */
-function renderWords() {
+function _wordFolderListHTML(lang, sq) {
+  const cats = getUsedCategories(lang, 'vocab');
+  const uncatCount = state.vocabulary.filter(v => !v.category && v.lang === lang).length;
+  const filteredCats = sq ? cats.filter(c => {
+    if (c.toLowerCase().includes(sq)) return true;
+    return state.vocabulary.some(v => v.category === c && v.lang === lang && (
+      v.word.toLowerCase().includes(sq) || v.meaning.toLowerCase().includes(sq) ||
+      (v.reading||'').toLowerCase().includes(sq)
+    ));
+  }) : cats;
+  const filteredUncat = sq ? state.vocabulary.filter(v => !v.category && v.lang === lang && (
+    v.word.toLowerCase().includes(sq) || v.meaning.toLowerCase().includes(sq) ||
+    (v.reading||'').toLowerCase().includes(sq)
+  )).length : uncatCount;
+  const showUnfiled = sq ? filteredUncat > 0 : uncatCount > 0;
+  return `<div class="folder-list">
+    ${filteredCats.map((c,i) => {
+      const count = state.vocabulary.filter(v => v.category === c && v.lang === lang).length;
+      const isFirst = i === 0;
+      const isLast = i === filteredCats.length - 1;
+      return `<div class="folder-row stagger" style="animation-delay:${Math.min(i*0.03,0.4)}s">
+        <div class="folder-icon"><i class="fas fa-folder"></i></div>
+        <div class="folder-info" onclick="openFolder('${esc(c)}','words')">
+          <div class="folder-name">${esc(c)}</div>
+          <div class="folder-count">${count} word${count!==1?'s':''}</div>
+        </div>
+        <div class="folder-actions">
+          <button class="move-up" title="Move up" onclick="moveFolder('${esc(c)}',-1,'words')" ${isFirst?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-up"></i></button>
+          <button class="move-down" title="Move down" onclick="moveFolder('${esc(c)}',1,'words')" ${isLast?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-down"></i></button>
+          <button class="edit-btn" title="Rename / Delete" onclick="showFolderOptionsPrompt('${esc(c)}','words')"><i class="fas fa-ellipsis-vertical"></i></button>
+        </div>
+      </div>`;
+    }).join('')}
+    ${showUnfiled ? `<div class="folder-row stagger" style="animation-delay:${Math.min(filteredCats.length*0.03,0.4)}s">
+      <div class="folder-icon"><i class="fas fa-folder-open" style="color:var(--text-2)"></i></div>
+      <div class="folder-info" onclick="openFolder('__uncat','words')">
+        <div class="folder-name">Unfiled</div>
+        <div class="folder-count">${(sq ? filteredUncat : uncatCount)} word${(sq ? filteredUncat : uncatCount)!==1?'s':''}</div>
+      </div>
+      <div class="folder-actions"></div>
+    </div>` : ''}
+    ${!sq ? `<div class="folder-row add-folder stagger" style="animation-delay:${Math.min((filteredCats.length+1)*0.03,0.4)}s" onclick="showCreateFolderPrompt('words')">
+      <div class="folder-icon"><i class="fas fa-folder-plus"></i></div>
+      <div class="add-label">New Folder</div>
+    </div>` : ''}
+  </div>
+  ${filteredCats.length === 0 && !showUnfiled && !sq ? '<div class="empty-state"><div class="empty-icon">📂</div><h3>No folders yet</h3><p>Create a folder and start adding words!</p></div>' : ''}
+  ${filteredCats.length === 0 && !showUnfiled && sq ? '<div class="empty-state"><div class="empty-icon">🔍</div><h3>No matches</h3><p>Try a different search term</p></div>' : ''}`;
+}
+
+function _wordItemListHTML(filtered) {
+  return filtered.length === 0 ? '<div class="empty-state"><div class="empty-icon">📝</div><h3>No words here</h3><p>Tap + to add vocabulary to this folder</p></div>' :
+    filtered.map((v,i)=>`
+      <div class="item-card stagger" style="animation-delay:${Math.min(i*0.03,0.5)}s" onclick="showEditWordModal('${v.id}')">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div style="flex:1;min-width:0">
+            <div class="word">${esc(v.word)}</div>
+            ${v.reading?`<div class="reading">${esc(v.reading)}${v.tone?` <span style="opacity:0.7;font-size:12px">[${esc(v.tone)}]</span>`:''}</div>`:''}
+            ${!v.reading&&v.tone?`<div class="reading" style="font-size:12px;opacity:0.8">Tone: ${esc(v.tone)}</div>`:''}
+            ${v.article?`<span class="tag" style="font-size:11px;margin-top:3px">${esc(v.article)}</span>`:''}
+          </div>
+          <button class="btn-move-folder" onclick="event.stopPropagation();showMoveToFolder('${v.id}','vocab')" title="Move to folder"><i class="fas fa-folder-arrow-down"></i></button>
+        </div>
+        <div class="meaning">${esc(v.meaning)}</div>
+        ${v.example?`<div class="example">${esc(v.example)}</div>`:''}
+        <div class="meta">
+          ${v.nextReview?`<span style="font-size:11px;color:var(--text-2)"><i class="fas fa-clock"></i> ${formatDate(v.nextReview)}</span>`:''}
+        </div>
+      </div>
+    `).join('');
+}
+
+function renderWords(searchOnly) {
   const el = document.getElementById('view-words');
   const folder = state.filter.openFolder;
 
   if (folder === null) {
-    // Show folder list view
     const lang = state.filter.lang;
-    const cats = getUsedCategories(lang, 'vocab');
-    const uncatCount = state.vocabulary.filter(v => !v.category && v.lang === lang).length;
-
     const sq = state.filter.search ? state.filter.search.toLowerCase() : '';
-    // Filter folders: show if folder name matches OR folder contains matching words
-    const filteredCats = sq ? cats.filter(c => {
-      if (c.toLowerCase().includes(sq)) return true;
-      return state.vocabulary.some(v => v.category === c && v.lang === lang && (
-        v.word.toLowerCase().includes(sq) || v.meaning.toLowerCase().includes(sq) ||
-        (v.reading||'').toLowerCase().includes(sq)
-      ));
-    }) : cats;
-    const filteredUncat = sq ? state.vocabulary.filter(v => !v.category && v.lang === lang && (
-      v.word.toLowerCase().includes(sq) || v.meaning.toLowerCase().includes(sq) ||
-      (v.reading||'').toLowerCase().includes(sq)
-    )).length : uncatCount;
-    const showUnfiled = sq ? filteredUncat > 0 : uncatCount > 0;
+
+    // If just updating search results, only swap the list content
+    if (searchOnly) {
+      const listTarget = document.getElementById('words-folder-results');
+      if (listTarget) { listTarget.innerHTML = _wordFolderListHTML(lang, sq); return; }
+    }
 
     el.innerHTML = `
       <div class="section-head"><h2>Vocabulary</h2>
         <button class="btn btn-ghost btn-sm" onclick="showBatchAddModal()" title="Batch Add"><i class="fas fa-list-check"></i> Batch</button>
       </div>
       <div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search folders & words..." value="${esc(state.filter.search)}" oninput="setWordFolderSearch(this.value)"></div>
-      <div class="folder-list">
-        ${filteredCats.map((c,i) => {
-          const count = state.vocabulary.filter(v => v.category === c && v.lang === lang).length;
-          const isFirst = i === 0;
-          const isLast = i === filteredCats.length - 1;
-          return `<div class="folder-row stagger" style="animation-delay:${Math.min(i*0.03,0.4)}s">
-            <div class="folder-icon"><i class="fas fa-folder"></i></div>
-            <div class="folder-info" onclick="openFolder('${esc(c)}','words')">
-              <div class="folder-name">${esc(c)}</div>
-              <div class="folder-count">${count} word${count!==1?'s':''}</div>
-            </div>
-            <div class="folder-actions">
-              <button class="move-up" title="Move up" onclick="moveFolder('${esc(c)}',-1,'words')" ${isFirst?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-up"></i></button>
-              <button class="move-down" title="Move down" onclick="moveFolder('${esc(c)}',1,'words')" ${isLast?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-down"></i></button>
-              <button class="edit-btn" title="Rename / Delete" onclick="showFolderOptionsPrompt('${esc(c)}','words')"><i class="fas fa-ellipsis-vertical"></i></button>
-            </div>
-          </div>`;
-        }).join('')}
-        ${showUnfiled ? `<div class="folder-row stagger" style="animation-delay:${Math.min(filteredCats.length*0.03,0.4)}s">
-          <div class="folder-icon"><i class="fas fa-folder-open" style="color:var(--text-2)"></i></div>
-          <div class="folder-info" onclick="openFolder('__uncat','words')">
-            <div class="folder-name">Unfiled</div>
-            <div class="folder-count">${(sq ? filteredUncat : uncatCount)} word${(sq ? filteredUncat : uncatCount)!==1?'s':''}</div>
-          </div>
-          <div class="folder-actions"></div>
-        </div>` : ''}
-        ${!sq ? `<div class="folder-row add-folder stagger" style="animation-delay:${Math.min((filteredCats.length+1)*0.03,0.4)}s" onclick="showCreateFolderPrompt('words')">
-          <div class="folder-icon"><i class="fas fa-folder-plus"></i></div>
-          <div class="add-label">New Folder</div>
-        </div>` : ''}
-      </div>
-      ${filteredCats.length === 0 && !showUnfiled && !sq ? '<div class="empty-state"><div class="empty-icon">📂</div><h3>No folders yet</h3><p>Create a folder and start adding words!</p></div>' : ''}
-      ${filteredCats.length === 0 && !showUnfiled && sq ? '<div class="empty-state"><div class="empty-icon">🔍</div><h3>No matches</h3><p>Try a different search term</p></div>' : ''}
+      <div id="words-folder-results">${_wordFolderListHTML(lang, sq)}</div>
       <button class="fab" onclick="showAddWordModal()"><i class="fas fa-plus"></i></button>
     `;
   } else {
-    // Show items inside a folder
     const folderName = folder === '__uncat' ? 'Unfiled' : folder;
     const filtered = getFilteredVocab();
 
+    // If just updating search results, only swap the list content
+    if (searchOnly) {
+      const listTarget = document.getElementById('word-list');
+      const countEl = document.getElementById('words-count');
+      if (listTarget) { listTarget.innerHTML = _wordItemListHTML(filtered); if(countEl) countEl.textContent = '('+filtered.length+')'; return; }
+    }
+
     el.innerHTML = `
       <button class="folder-back" onclick="closeFolder()"><i class="fas fa-arrow-left"></i> All Folders</button>
-      <div class="section-head"><h2><i class="fas fa-folder-open" style="color:var(--accent);font-size:18px"></i> ${esc(folderName)} <span style="color:var(--text-2);font-weight:400;font-size:16px">(${filtered.length})</span></h2>
+      <div class="section-head"><h2><i class="fas fa-folder-open" style="color:var(--accent);font-size:18px"></i> ${esc(folderName)} <span id="words-count" style="color:var(--text-2);font-weight:400;font-size:16px">(${filtered.length})</span></h2>
         <button class="btn btn-ghost btn-sm" onclick="showBatchAddModal()" title="Batch Add"><i class="fas fa-list-check"></i> Batch</button>
       </div>
       <div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search words..." value="${esc(state.filter.search)}" oninput="setSearch(this.value)"></div>
-      <div id="word-list">
-        ${filtered.length === 0 ? '<div class="empty-state"><div class="empty-icon">📝</div><h3>No words here</h3><p>Tap + to add vocabulary to this folder</p></div>' :
-          filtered.map((v,i)=>`
-            <div class="item-card stagger" style="animation-delay:${Math.min(i*0.03,0.5)}s" onclick="showEditWordModal('${v.id}')">
-              <div style="display:flex;justify-content:space-between;align-items:flex-start">
-                <div style="flex:1;min-width:0">
-                  <div class="word">${esc(v.word)}</div>
-                  ${v.reading?`<div class="reading">${esc(v.reading)}${v.tone?` <span style="opacity:0.7;font-size:12px">[${esc(v.tone)}]</span>`:''}</div>`:''}
-                  ${!v.reading&&v.tone?`<div class="reading" style="font-size:12px;opacity:0.8">Tone: ${esc(v.tone)}</div>`:''}
-                  ${v.article?`<span class="tag" style="font-size:11px;margin-top:3px">${esc(v.article)}</span>`:''}
-                </div>
-                <button class="btn-move-folder" onclick="event.stopPropagation();showMoveToFolder('${v.id}','vocab')" title="Move to folder"><i class="fas fa-folder-arrow-down"></i></button>
-              </div>
-              <div class="meaning">${esc(v.meaning)}</div>
-              ${v.example?`<div class="example">${esc(v.example)}</div>`:''}
-              <div class="meta">
-                ${v.nextReview?`<span style="font-size:11px;color:var(--text-2)"><i class="fas fa-clock"></i> ${formatDate(v.nextReview)}</span>`:''}
-              </div>
-            </div>
-          `).join('')}
-      </div>
+      <div id="word-list">${_wordItemListHTML(filtered)}</div>
       <button class="fab" onclick="showAddWordModal()"><i class="fas fa-plus"></i></button>
     `;
   }
@@ -1880,14 +1895,8 @@ function deleteFolder(name, view) {
   renderCurrentView();
 }
 
-function refocusSearch(containerEl) {
-  setTimeout(() => {
-    const inp = containerEl.querySelector('.search-wrap input[type="search"]');
-    if (inp) { inp.focus(); inp.selectionStart = inp.selectionEnd = inp.value.length; }
-  }, 0);
-}
-const setSearch = debounce(val=>{ state.filter.search=val; renderWords(); refocusSearch(document.getElementById('view-words')); }, 250);
-const setWordFolderSearch = debounce(val=>{ state.filter.search=val; renderWords(); refocusSearch(document.getElementById('view-words')); }, 250);
+const setSearch = debounce(val=>{ state.filter.search=val; renderWords(true); }, 250);
+const setWordFolderSearch = debounce(val=>{ state.filter.search=val; renderWords(true); }, 250);
 
 const LANG_ATTR_MAP = { ja:'ja', de:'de', zh:'zh', ko:'ko', fr:'fr', es:'es', it:'it', pt:'pt', ru:'ru' };
 function langAttr(code) { return LANG_ATTR_MAP[code] || code || 'en'; }
@@ -2114,91 +2123,105 @@ function deleteWord(id) {
 /* ============================================================
    GRAMMAR VIEW
    ============================================================ */
-function renderGrammar() {
+function _gramFolderListHTML(lang, sq) {
+  const cats = getUsedCategories(lang, 'grammar');
+  const uncatCount = state.grammar.filter(g => !g.category && g.lang === lang).length;
+  const filteredCats = sq ? cats.filter(c => {
+    if (c.toLowerCase().includes(sq)) return true;
+    return state.grammar.some(g => g.category === c && g.lang === lang && (
+      g.pattern.toLowerCase().includes(sq) || g.explanation.toLowerCase().includes(sq) ||
+      (g.tags||'').toLowerCase().includes(sq)
+    ));
+  }) : cats;
+  const filteredUncat = sq ? state.grammar.filter(g => !g.category && g.lang === lang && (
+    g.pattern.toLowerCase().includes(sq) || g.explanation.toLowerCase().includes(sq) ||
+    (g.tags||'').toLowerCase().includes(sq)
+  )).length : uncatCount;
+  const showUnfiled = sq ? filteredUncat > 0 : uncatCount > 0;
+  return `<div class="folder-list">
+    ${filteredCats.map((c,i) => {
+      const count = state.grammar.filter(g => g.category === c && g.lang === lang).length;
+      const isFirst = i === 0;
+      const isLast = i === filteredCats.length - 1;
+      return `<div class="folder-row stagger" style="animation-delay:${Math.min(i*0.03,0.4)}s">
+        <div class="folder-icon"><i class="fas fa-folder"></i></div>
+        <div class="folder-info" onclick="openFolder('${esc(c)}','grammar')">
+          <div class="folder-name">${esc(c)}</div>
+          <div class="folder-count">${count} rule${count!==1?'s':''}</div>
+        </div>
+        <div class="folder-actions">
+          <button class="move-up" title="Move up" onclick="moveFolder('${esc(c)}',-1,'grammar')" ${isFirst?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-up"></i></button>
+          <button class="move-down" title="Move down" onclick="moveFolder('${esc(c)}',1,'grammar')" ${isLast?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-down"></i></button>
+          <button class="edit-btn" title="Rename / Delete" onclick="showFolderOptionsPrompt('${esc(c)}','grammar')"><i class="fas fa-ellipsis-vertical"></i></button>
+        </div>
+      </div>`;
+    }).join('')}
+    ${showUnfiled ? `<div class="folder-row stagger" style="animation-delay:${Math.min(filteredCats.length*0.03,0.4)}s">
+      <div class="folder-icon"><i class="fas fa-folder-open" style="color:var(--text-2)"></i></div>
+      <div class="folder-info" onclick="openFolder('__uncat','grammar')">
+        <div class="folder-name">Unfiled</div>
+        <div class="folder-count">${(sq ? filteredUncat : uncatCount)} rule${(sq ? filteredUncat : uncatCount)!==1?'s':''}</div>
+      </div>
+      <div class="folder-actions"></div>
+    </div>` : ''}
+    ${!sq ? `<div class="folder-row add-folder stagger" style="animation-delay:${Math.min((filteredCats.length+1)*0.03,0.4)}s" onclick="showCreateFolderPrompt('grammar')">
+      <div class="folder-icon"><i class="fas fa-folder-plus"></i></div>
+      <div class="add-label">New Folder</div>
+    </div>` : ''}
+  </div>
+  ${filteredCats.length === 0 && !showUnfiled && !sq ? '<div class="empty-state"><div class="empty-icon">📂</div><h3>No folders yet</h3><p>Create a folder and start adding grammar!</p></div>' : ''}
+  ${filteredCats.length === 0 && !showUnfiled && sq ? '<div class="empty-state"><div class="empty-icon">🔍</div><h3>No matches</h3><p>Try a different search term</p></div>' : ''}`;
+}
+
+function _gramItemListHTML(filtered) {
+  return filtered.length===0?'<div class="empty-state"><div class="empty-icon">📝</div><h3>No grammar here</h3><p>Tap + to add grammar to this folder</p></div>':
+    filtered.map((g,i)=>`
+      <div class="item-card stagger" style="animation-delay:${Math.min(i*0.03,0.5)}s" onclick="showEditGrammarModal('${g.id}')">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div class="word" style="font-size:18px;flex:1;min-width:0">${esc(g.pattern)}</div>
+          <button class="btn-move-folder" onclick="event.stopPropagation();showMoveToFolder('${g.id}','grammar')" title="Move to folder"><i class="fas fa-folder-arrow-down"></i></button>
+        </div>
+        <div class="meaning" style="margin-top:6px">${esc(g.explanation).substring(0,100)}${g.explanation.length>100?'...':''}</div>
+        ${g.examples?`<div class="example">${esc(g.examples).substring(0,120)}</div>`:''}
+        <div class="meta"></div>
+      </div>
+    `).join('');
+}
+
+function renderGrammar(searchOnly) {
   const el = document.getElementById('view-grammar');
   const folder = state.filter.openFolder;
 
   if (folder === null) {
     const lang = state.filter.lang;
-    const cats = getUsedCategories(lang, 'grammar');
-    const uncatCount = state.grammar.filter(g => !g.category && g.lang === lang).length;
-
     const sq = state.filter.search ? state.filter.search.toLowerCase() : '';
-    const filteredCats = sq ? cats.filter(c => {
-      if (c.toLowerCase().includes(sq)) return true;
-      return state.grammar.some(g => g.category === c && g.lang === lang && (
-        g.pattern.toLowerCase().includes(sq) || g.explanation.toLowerCase().includes(sq) ||
-        (g.tags||'').toLowerCase().includes(sq)
-      ));
-    }) : cats;
-    const filteredUncat = sq ? state.grammar.filter(g => !g.category && g.lang === lang && (
-      g.pattern.toLowerCase().includes(sq) || g.explanation.toLowerCase().includes(sq) ||
-      (g.tags||'').toLowerCase().includes(sq)
-    )).length : uncatCount;
-    const showUnfiled = sq ? filteredUncat > 0 : uncatCount > 0;
+
+    if (searchOnly) {
+      const listTarget = document.getElementById('grammar-folder-results');
+      if (listTarget) { listTarget.innerHTML = _gramFolderListHTML(lang, sq); return; }
+    }
 
     el.innerHTML = `
       <div class="section-head"><h2>Grammar</h2></div>
       <div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search folders & grammar..." value="${esc(state.filter.search)}" oninput="setGramFolderSearch(this.value)"></div>
-      <div class="folder-list">
-        ${filteredCats.map((c,i) => {
-          const count = state.grammar.filter(g => g.category === c && g.lang === lang).length;
-          const isFirst = i === 0;
-          const isLast = i === filteredCats.length - 1;
-          return `<div class="folder-row stagger" style="animation-delay:${Math.min(i*0.03,0.4)}s">
-            <div class="folder-icon"><i class="fas fa-folder"></i></div>
-            <div class="folder-info" onclick="openFolder('${esc(c)}','grammar')">
-              <div class="folder-name">${esc(c)}</div>
-              <div class="folder-count">${count} rule${count!==1?'s':''}</div>
-            </div>
-            <div class="folder-actions">
-              <button class="move-up" title="Move up" onclick="moveFolder('${esc(c)}',-1,'grammar')" ${isFirst?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-up"></i></button>
-              <button class="move-down" title="Move down" onclick="moveFolder('${esc(c)}',1,'grammar')" ${isLast?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-down"></i></button>
-              <button class="edit-btn" title="Rename / Delete" onclick="showFolderOptionsPrompt('${esc(c)}','grammar')"><i class="fas fa-ellipsis-vertical"></i></button>
-            </div>
-          </div>`;
-        }).join('')}
-        ${showUnfiled ? `<div class="folder-row stagger" style="animation-delay:${Math.min(filteredCats.length*0.03,0.4)}s">
-          <div class="folder-icon"><i class="fas fa-folder-open" style="color:var(--text-2)"></i></div>
-          <div class="folder-info" onclick="openFolder('__uncat','grammar')">
-            <div class="folder-name">Unfiled</div>
-            <div class="folder-count">${(sq ? filteredUncat : uncatCount)} rule${(sq ? filteredUncat : uncatCount)!==1?'s':''}</div>
-          </div>
-          <div class="folder-actions"></div>
-        </div>` : ''}
-        ${!sq ? `<div class="folder-row add-folder stagger" style="animation-delay:${Math.min((filteredCats.length+1)*0.03,0.4)}s" onclick="showCreateFolderPrompt('grammar')">
-          <div class="folder-icon"><i class="fas fa-folder-plus"></i></div>
-          <div class="add-label">New Folder</div>
-        </div>` : ''}
-      </div>
-      ${filteredCats.length === 0 && !showUnfiled && !sq ? '<div class="empty-state"><div class="empty-icon">📂</div><h3>No folders yet</h3><p>Create a folder and start adding grammar!</p></div>' : ''}
-      ${filteredCats.length === 0 && !showUnfiled && sq ? '<div class="empty-state"><div class="empty-icon">🔍</div><h3>No matches</h3><p>Try a different search term</p></div>' : ''}
+      <div id="grammar-folder-results">${_gramFolderListHTML(lang, sq)}</div>
       <button class="fab" onclick="showAddGrammarModal()"><i class="fas fa-plus"></i></button>
     `;
   } else {
     const folderName = folder === '__uncat' ? 'Unfiled' : folder;
     const filtered = getFilteredGrammar();
 
+    if (searchOnly) {
+      const listTarget = document.getElementById('grammar-list');
+      const countEl = document.getElementById('grammar-count');
+      if (listTarget) { listTarget.innerHTML = _gramItemListHTML(filtered); if(countEl) countEl.textContent = '('+filtered.length+')'; return; }
+    }
+
     el.innerHTML = `
       <button class="folder-back" onclick="closeFolder()"><i class="fas fa-arrow-left"></i> All Folders</button>
-      <div class="section-head"><h2><i class="fas fa-folder-open" style="color:var(--accent);font-size:18px"></i> ${esc(folderName)} <span style="color:var(--text-2);font-weight:400;font-size:16px">(${filtered.length})</span></h2></div>
+      <div class="section-head"><h2><i class="fas fa-folder-open" style="color:var(--accent);font-size:18px"></i> ${esc(folderName)} <span id="grammar-count" style="color:var(--text-2);font-weight:400;font-size:16px">(${filtered.length})</span></h2></div>
       <div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search grammar..." value="${esc(state.filter.search)}" oninput="setGramSearch(this.value)"></div>
-      <div id="grammar-list">
-        ${filtered.length===0?'<div class="empty-state"><div class="empty-icon">📝</div><h3>No grammar here</h3><p>Tap + to add grammar to this folder</p></div>':
-          filtered.map((g,i)=>`
-            <div class="item-card stagger" style="animation-delay:${Math.min(i*0.03,0.5)}s" onclick="showEditGrammarModal('${g.id}')">
-              <div style="display:flex;justify-content:space-between;align-items:flex-start">
-                <div class="word" style="font-size:18px;flex:1;min-width:0">${esc(g.pattern)}</div>
-                <button class="btn-move-folder" onclick="event.stopPropagation();showMoveToFolder('${g.id}','grammar')" title="Move to folder"><i class="fas fa-folder-arrow-down"></i></button>
-              </div>
-              <div class="meaning" style="margin-top:6px">${esc(g.explanation).substring(0,100)}${g.explanation.length>100?'...':''}</div>
-              ${g.examples?`<div class="example">${esc(g.examples).substring(0,120)}</div>`:''}
-              <div class="meta">
-
-              </div>
-            </div>
-          `).join('')}
-      </div>
+      <div id="grammar-list">${_gramItemListHTML(filtered)}</div>
       <button class="fab" onclick="showAddGrammarModal()"><i class="fas fa-plus"></i></button>
     `;
   }
@@ -2218,8 +2241,8 @@ function getFilteredGrammar() {
   return arr.sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
 }
 
-const setGramSearch=debounce(v=>{state.filter.search=v;renderGrammar();refocusSearch(document.getElementById('view-grammar'));},250);
-const setGramFolderSearch=debounce(v=>{state.filter.search=v;renderGrammar();refocusSearch(document.getElementById('view-grammar'));},250);
+const setGramSearch=debounce(v=>{state.filter.search=v;renderGrammar(true);},250);
+const setGramFolderSearch=debounce(v=>{state.filter.search=v;renderGrammar(true);},250);
 
 function showAddGrammarModal() {
   const currentFolder = state.filter.openFolder && state.filter.openFolder !== '__uncat' ? state.filter.openFolder : '';
