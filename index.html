@@ -2689,7 +2689,30 @@ function startQuiz(type, lang, count, dueOnly, folder) {
 
   const today = todayStr();
   let selected;
-  if(dueOnly) {
+  if(type==='flashcard') {
+    // Sort by familiarity: least familiar first
+    // Priority: never reviewed → overdue (most overdue first) → low interval → rest
+    const scored = pool.map(v => {
+      const reps = Number(v.repetitions) || 0;
+      const ivl = Number(v.interval) || 0;
+      const nr = v.nextReview || '';
+      if(!nr || reps === 0) return { v, score: -1000 + ivl }; // never reviewed = highest priority
+      const daysUntil = (new Date(nr) - new Date(today)) / 86400000;
+      // negative daysUntil = overdue (more negative = more overdue = higher priority)
+      return { v, score: daysUntil + ivl * 0.1 };
+    });
+    scored.sort((a,b) => a.score - b.score);
+    if(dueOnly) {
+      const dueItems = scored.filter(s => {
+        const nr = s.v.nextReview || '';
+        return !nr || nr <= today;
+      });
+      if(dueItems.length === 0){ showToast('Nothing due for review!','info'); return; }
+      selected = dueItems.slice(0, count).map(s => s.v);
+    } else {
+      selected = scored.slice(0, count).map(s => s.v);
+    }
+  } else if(dueOnly) {
     const due = pool.filter(v=>!v.nextReview||v.nextReview<=today);
     selected = shuffle(due).slice(0, count);
     if(selected.length===0){ showToast('Nothing due for review!','info'); return; }
