@@ -467,6 +467,13 @@ a{color:var(--accent);text-decoration:none}
 .quiz-opt.correct{border-color:var(--success);background:var(--success-bg);color:var(--success);animation:correctPop .3s ease}
 .quiz-opt.wrong{border-color:var(--error);background:var(--error-bg);color:var(--error);animation:shake .4s ease}
 .quiz-opt:disabled{cursor:default;transform:none !important}
+.quiz-next-btn{
+  display:block;width:100%;margin-top:16px;padding:14px;border:none;border-radius:var(--radius);
+  background:var(--accent);color:#fff;font-size:16px;font-weight:700;font-family:'Quicksand',sans-serif;
+  cursor:pointer;transition:all .2s;letter-spacing:0.5px;
+}
+.quiz-next-btn:hover,.quiz-next-btn:active{background:var(--accent-dark);transform:scale(1.02)}
+.quiz-next-btn i{margin-left:6px}
 @keyframes correctPop{0%{transform:scale(1)}50%{transform:scale(1.03)}100%{transform:scale(1)}}
 @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
 
@@ -2883,7 +2890,15 @@ function answerMC(idx) {
   const quality = correct ? 4 : 1;
   updateSRS(current.item, quality);
 
-  setTimeout(()=>{ q.idx++; renderQuizActive(document.getElementById('view-quiz')); }, correct?600:1200);
+  if(correct){
+    setTimeout(()=>{ q.idx++; renderQuizActive(document.getElementById('view-quiz')); }, 600);
+  } else {
+    const nb = document.createElement('button');
+    nb.className = 'quiz-next-btn';
+    nb.innerHTML = 'Next <i class="fas fa-arrow-right"></i>';
+    nb.onclick = ()=>{ q.idx++; renderQuizActive(document.getElementById('view-quiz')); };
+    document.getElementById('quiz-opts').after(nb);
+  }
 }
 
 function answerType(e) {
@@ -2904,7 +2919,15 @@ function answerType(e) {
 
   q.results.push({item:current.item, correct, chosen:input, answer:current.answer});
   updateSRS(current.item, correct?4:1);
-  setTimeout(()=>{ q.idx++; renderQuizActive(document.getElementById('view-quiz')); }, correct?800:1500);
+  if(correct){
+    setTimeout(()=>{ q.idx++; renderQuizActive(document.getElementById('view-quiz')); }, 800);
+  } else {
+    const nb = document.createElement('button');
+    nb.className = 'quiz-next-btn';
+    nb.innerHTML = 'Next <i class="fas fa-arrow-right"></i>';
+    nb.onclick = ()=>{ q.idx++; renderQuizActive(document.getElementById('view-quiz')); };
+    fb.after(nb);
+  }
 }
 
 function rateFlashcard(quality) {
