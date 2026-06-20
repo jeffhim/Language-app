@@ -1515,25 +1515,43 @@ function showDashDetail(type, item) {
    WORDS VIEW
    ============================================================ */
 function _wordFolderListHTML(lang, sq) {
+  // When searching, show matching word cards directly across all folders
+  if (sq) {
+    const matches = state.vocabulary.filter(v => v.lang === lang && (
+      v.word.toLowerCase().includes(sq) || v.meaning.toLowerCase().includes(sq) ||
+      (v.reading||'').toLowerCase().includes(sq) || (v.category||'').toLowerCase().includes(sq)
+    )).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+    if (matches.length === 0) return '<div class="empty-state"><div class="empty-icon">🔍</div><h3>No matches</h3><p>Try a different search term</p></div>';
+    return `<div style="font-size:13px;color:var(--text-2);margin-bottom:8px;font-weight:600">${matches.length} result${matches.length!==1?'s':''}</div>` +
+      matches.map((v,i)=>`
+      <div class="item-card stagger" style="animation-delay:${Math.min(i*0.03,0.5)}s" onclick="showEditWordModal('${v.id}')">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div style="flex:1;min-width:0">
+            <div class="word">${esc(v.word)}</div>
+            ${v.reading?`<div class="reading">${esc(v.reading)}${v.tone?` <span style="opacity:0.7;font-size:12px">[${esc(v.tone)}]</span>`:''}</div>`:''}
+            ${!v.reading&&v.tone?`<div class="reading" style="font-size:12px;opacity:0.8">Tone: ${esc(v.tone)}</div>`:''}
+            ${v.article?`<span class="tag" style="font-size:11px;margin-top:3px">${esc(v.article)}</span>`:''}
+          </div>
+          <button class="btn-move-folder" onclick="event.stopPropagation();showMoveToFolder('${v.id}','vocab')" title="Move to folder"><i class="fas fa-folder-arrow-down"></i></button>
+        </div>
+        <div class="meaning">${esc(v.meaning)}</div>
+        ${v.example?`<div class="example">${esc(v.example)}</div>`:''}
+        <div class="meta">
+          ${v.category?`<span style="font-size:11px;color:var(--accent)"><i class="fas fa-folder"></i> ${esc(v.category)}</span>`:''}
+          ${v.nextReview?`<span style="font-size:11px;color:var(--text-2)"><i class="fas fa-clock"></i> ${formatDate(v.nextReview)}</span>`:''}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // No search — show normal folder list
   const cats = getUsedCategories(lang, 'vocab');
   const uncatCount = state.vocabulary.filter(v => !v.category && v.lang === lang).length;
-  const filteredCats = sq ? cats.filter(c => {
-    if (c.toLowerCase().includes(sq)) return true;
-    return state.vocabulary.some(v => v.category === c && v.lang === lang && (
-      v.word.toLowerCase().includes(sq) || v.meaning.toLowerCase().includes(sq) ||
-      (v.reading||'').toLowerCase().includes(sq)
-    ));
-  }) : cats;
-  const filteredUncat = sq ? state.vocabulary.filter(v => !v.category && v.lang === lang && (
-    v.word.toLowerCase().includes(sq) || v.meaning.toLowerCase().includes(sq) ||
-    (v.reading||'').toLowerCase().includes(sq)
-  )).length : uncatCount;
-  const showUnfiled = sq ? filteredUncat > 0 : uncatCount > 0;
   return `<div class="folder-list">
-    ${filteredCats.map((c,i) => {
+    ${cats.map((c,i) => {
       const count = state.vocabulary.filter(v => v.category === c && v.lang === lang).length;
       const isFirst = i === 0;
-      const isLast = i === filteredCats.length - 1;
+      const isLast = i === cats.length - 1;
       return `<div class="folder-row stagger" style="animation-delay:${Math.min(i*0.03,0.4)}s">
         <div class="folder-icon"><i class="fas fa-folder"></i></div>
         <div class="folder-info" onclick="openFolder('${esc(c)}','words')">
@@ -1547,21 +1565,20 @@ function _wordFolderListHTML(lang, sq) {
         </div>
       </div>`;
     }).join('')}
-    ${showUnfiled ? `<div class="folder-row stagger" style="animation-delay:${Math.min(filteredCats.length*0.03,0.4)}s">
+    ${uncatCount > 0 ? `<div class="folder-row stagger" style="animation-delay:${Math.min(cats.length*0.03,0.4)}s">
       <div class="folder-icon"><i class="fas fa-folder-open" style="color:var(--text-2)"></i></div>
       <div class="folder-info" onclick="openFolder('__uncat','words')">
         <div class="folder-name">Unfiled</div>
-        <div class="folder-count">${(sq ? filteredUncat : uncatCount)} word${(sq ? filteredUncat : uncatCount)!==1?'s':''}</div>
+        <div class="folder-count">${uncatCount} word${uncatCount!==1?'s':''}</div>
       </div>
       <div class="folder-actions"></div>
     </div>` : ''}
-    ${!sq ? `<div class="folder-row add-folder stagger" style="animation-delay:${Math.min((filteredCats.length+1)*0.03,0.4)}s" onclick="showCreateFolderPrompt('words')">
+    <div class="folder-row add-folder stagger" style="animation-delay:${Math.min((cats.length+1)*0.03,0.4)}s" onclick="showCreateFolderPrompt('words')">
       <div class="folder-icon"><i class="fas fa-folder-plus"></i></div>
       <div class="add-label">New Folder</div>
-    </div>` : ''}
+    </div>
   </div>
-  ${filteredCats.length === 0 && !showUnfiled && !sq ? '<div class="empty-state"><div class="empty-icon">📂</div><h3>No folders yet</h3><p>Create a folder and start adding words!</p></div>' : ''}
-  ${filteredCats.length === 0 && !showUnfiled && sq ? '<div class="empty-state"><div class="empty-icon">🔍</div><h3>No matches</h3><p>Try a different search term</p></div>' : ''}`;
+  ${cats.length === 0 && uncatCount === 0 ? '<div class="empty-state"><div class="empty-icon">📂</div><h3>No folders yet</h3><p>Create a folder and start adding words!</p></div>' : ''}`;
 }
 
 function _wordItemListHTML(filtered) {
@@ -2027,9 +2044,26 @@ function syncToneToggles(toggleContainerId, inputId) {
 function handleAddWord(e) {
   e.preventDefault();
   const lang = state.filter.lang;
+  const wordVal = document.getElementById('aw-word').value.trim();
+  // Check for duplicate
+  const dupe = state.vocabulary.find(v =>
+    v.lang === lang && v.word.trim().toLowerCase() === wordVal.toLowerCase()
+  );
+  if (dupe) {
+    const folder = dupe.category || 'Unfiled';
+    showConfirm(
+      `"${wordVal}" already exists in folder "${folder}".\n\nMeaning: ${dupe.meaning}\n\nAdd anyway?`,
+      () => { _doAddWord(lang, wordVal); }
+    );
+    return;
+  }
+  _doAddWord(lang, wordVal);
+}
+
+function _doAddWord(lang, wordVal) {
   const data = {
     id: uid(), lang,
-    word: document.getElementById('aw-word').value.trim(),
+    word: wordVal,
     reading: (document.getElementById('aw-reading')||{}).value||'',
     tone: (document.getElementById('aw-tone')||{}).value||'',
     article: (document.getElementById('aw-article')||{}).value||'',
@@ -2124,25 +2158,37 @@ function deleteWord(id) {
    GRAMMAR VIEW
    ============================================================ */
 function _gramFolderListHTML(lang, sq) {
+  // When searching, show matching grammar cards directly across all folders
+  if (sq) {
+    const matches = state.grammar.filter(g => g.lang === lang && (
+      g.pattern.toLowerCase().includes(sq) || g.explanation.toLowerCase().includes(sq) ||
+      (g.tags||'').toLowerCase().includes(sq) || (g.category||'').toLowerCase().includes(sq)
+    )).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+    if (matches.length === 0) return '<div class="empty-state"><div class="empty-icon">🔍</div><h3>No matches</h3><p>Try a different search term</p></div>';
+    return `<div style="font-size:13px;color:var(--text-2);margin-bottom:8px;font-weight:600">${matches.length} result${matches.length!==1?'s':''}</div>` +
+      matches.map((g,i)=>`
+      <div class="item-card stagger" style="animation-delay:${Math.min(i*0.03,0.5)}s" onclick="showEditGrammarModal('${g.id}')">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div class="word" style="font-size:18px;flex:1;min-width:0">${esc(g.pattern)}</div>
+          <button class="btn-move-folder" onclick="event.stopPropagation();showMoveToFolder('${g.id}','grammar')" title="Move to folder"><i class="fas fa-folder-arrow-down"></i></button>
+        </div>
+        <div class="meaning" style="margin-top:6px">${esc(g.explanation).substring(0,100)}${g.explanation.length>100?'...':''}</div>
+        ${g.examples?`<div class="example">${esc(g.examples).substring(0,120)}</div>`:''}
+        <div class="meta">
+          ${g.category?`<span style="font-size:11px;color:var(--accent)"><i class="fas fa-folder"></i> ${esc(g.category)}</span>`:''}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // No search — show normal folder list
   const cats = getUsedCategories(lang, 'grammar');
   const uncatCount = state.grammar.filter(g => !g.category && g.lang === lang).length;
-  const filteredCats = sq ? cats.filter(c => {
-    if (c.toLowerCase().includes(sq)) return true;
-    return state.grammar.some(g => g.category === c && g.lang === lang && (
-      g.pattern.toLowerCase().includes(sq) || g.explanation.toLowerCase().includes(sq) ||
-      (g.tags||'').toLowerCase().includes(sq)
-    ));
-  }) : cats;
-  const filteredUncat = sq ? state.grammar.filter(g => !g.category && g.lang === lang && (
-    g.pattern.toLowerCase().includes(sq) || g.explanation.toLowerCase().includes(sq) ||
-    (g.tags||'').toLowerCase().includes(sq)
-  )).length : uncatCount;
-  const showUnfiled = sq ? filteredUncat > 0 : uncatCount > 0;
   return `<div class="folder-list">
-    ${filteredCats.map((c,i) => {
+    ${cats.map((c,i) => {
       const count = state.grammar.filter(g => g.category === c && g.lang === lang).length;
       const isFirst = i === 0;
-      const isLast = i === filteredCats.length - 1;
+      const isLast = i === cats.length - 1;
       return `<div class="folder-row stagger" style="animation-delay:${Math.min(i*0.03,0.4)}s">
         <div class="folder-icon"><i class="fas fa-folder"></i></div>
         <div class="folder-info" onclick="openFolder('${esc(c)}','grammar')">
@@ -2156,21 +2202,20 @@ function _gramFolderListHTML(lang, sq) {
         </div>
       </div>`;
     }).join('')}
-    ${showUnfiled ? `<div class="folder-row stagger" style="animation-delay:${Math.min(filteredCats.length*0.03,0.4)}s">
+    ${uncatCount > 0 ? `<div class="folder-row stagger" style="animation-delay:${Math.min(cats.length*0.03,0.4)}s">
       <div class="folder-icon"><i class="fas fa-folder-open" style="color:var(--text-2)"></i></div>
       <div class="folder-info" onclick="openFolder('__uncat','grammar')">
         <div class="folder-name">Unfiled</div>
-        <div class="folder-count">${(sq ? filteredUncat : uncatCount)} rule${(sq ? filteredUncat : uncatCount)!==1?'s':''}</div>
+        <div class="folder-count">${uncatCount} rule${uncatCount!==1?'s':''}</div>
       </div>
       <div class="folder-actions"></div>
     </div>` : ''}
-    ${!sq ? `<div class="folder-row add-folder stagger" style="animation-delay:${Math.min((filteredCats.length+1)*0.03,0.4)}s" onclick="showCreateFolderPrompt('grammar')">
+    <div class="folder-row add-folder stagger" style="animation-delay:${Math.min((cats.length+1)*0.03,0.4)}s" onclick="showCreateFolderPrompt('grammar')">
       <div class="folder-icon"><i class="fas fa-folder-plus"></i></div>
       <div class="add-label">New Folder</div>
-    </div>` : ''}
+    </div>
   </div>
-  ${filteredCats.length === 0 && !showUnfiled && !sq ? '<div class="empty-state"><div class="empty-icon">📂</div><h3>No folders yet</h3><p>Create a folder and start adding grammar!</p></div>' : ''}
-  ${filteredCats.length === 0 && !showUnfiled && sq ? '<div class="empty-state"><div class="empty-icon">🔍</div><h3>No matches</h3><p>Try a different search term</p></div>' : ''}`;
+  ${cats.length === 0 && uncatCount === 0 ? '<div class="empty-state"><div class="empty-icon">📂</div><h3>No folders yet</h3><p>Create a folder and start adding grammar!</p></div>' : ''}`;
 }
 
 function _gramItemListHTML(filtered) {
@@ -2264,9 +2309,27 @@ function showAddGrammarModal() {
 
 function handleAddGrammar(e) {
   e.preventDefault();
+  const lang = state.filter.lang;
+  const patternVal = document.getElementById('ag-pattern').value.trim();
+  // Check for duplicate
+  const dupe = state.grammar.find(g =>
+    g.lang === lang && g.pattern.trim().toLowerCase() === patternVal.toLowerCase()
+  );
+  if (dupe) {
+    const folder = dupe.category || 'Unfiled';
+    showConfirm(
+      `"${patternVal}" already exists in folder "${folder}".\n\nExplanation: ${dupe.explanation.substring(0,80)}${dupe.explanation.length>80?'...':''}\n\nAdd anyway?`,
+      () => { _doAddGrammar(lang, patternVal); }
+    );
+    return;
+  }
+  _doAddGrammar(lang, patternVal);
+}
+
+function _doAddGrammar(lang, patternVal) {
   const data = {
-    id:uid(), lang:state.filter.lang,
-    pattern:document.getElementById('ag-pattern').value.trim(),
+    id:uid(), lang,
+    pattern:patternVal,
     explanation:document.getElementById('ag-explanation').value.trim(),
     examples:document.getElementById('ag-examples').value.trim(),
     tags:'',
@@ -2835,7 +2898,7 @@ function answerType(e) {
   if(correct) {
     fb.innerHTML = `<div class="card" style="background:var(--success-bg);border:1px solid var(--success);color:var(--success);text-align:center;padding:12px"><i class="fas fa-check-circle"></i> Correct!</div>`;
   } else {
-    fb.innerHTML = `<div class="card" style="background:var(--error-bg);border:1px solid var(--error);color:var(--error);padding:12px"><i class="fas fa-times-circle"></i> Incorrect<br><span style="font-size:14px">Correct answer: <b>${esc(current.answer)}</b></span></div>`;
+    fb.innerHTML = `<div class="card" style="background:var(--error-bg);border:1px solid var(--error);color:var(--error);padding:12px"><i class="fas fa-times-circle"></i> Incorrect<br><span style="font-size:14px">Correct answer: <b>${esc(current.answer)}</b>${current.item.reading?` <span style="opacity:0.8;font-weight:400">(${esc(current.item.reading)})</span>`:''}</span></div>`;
   }
   document.getElementById('type-input').disabled = true;
 
