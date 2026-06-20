@@ -474,6 +474,16 @@ a{color:var(--accent);text-decoration:none}
 }
 .quiz-next-btn:hover,.quiz-next-btn:active{background:var(--accent-dark);transform:scale(1.02)}
 .quiz-next-btn i{margin-left:6px}
+.dupe-warn{
+  margin-top:6px;padding:10px 12px;border-radius:var(--radius-sm);
+  background:var(--warning-bg,#fff8e1);border:1px solid var(--warning,#f9a825);
+  color:var(--warning-text,#e65100);font-size:13px;line-height:1.5;
+  display:flex;align-items:flex-start;gap:8px;animation:fadeSlide .25s ease;
+}
+.dark .dupe-warn{background:#3e2e00;border-color:#b38600;color:#ffd54f}
+.dupe-warn i{flex-shrink:0;margin-top:2px;font-size:15px}
+.dupe-warn b{font-weight:700}
+@keyframes fadeSlide{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes correctPop{0%{transform:scale(1)}50%{transform:scale(1.03)}100%{transform:scale(1)}}
 @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
 
@@ -1932,7 +1942,7 @@ function showAddWordModal() {
   showModal(`
     <h2>Add Word</h2>
     <form id="add-word-form" onsubmit="handleAddWord(event)">
-      <div class="form-group"><label>Word / Expression</label><input id="aw-word" required placeholder="Enter word" lang="${la}"></div>
+      <div class="form-group"><label>Word / Expression</label><input id="aw-word" required placeholder="Enter word" lang="${la}"><div id="aw-dupe-warn"></div></div>
       <div id="aw-extra-fields">${renderLangFields(lang,'aw')}</div>
       ${lang!=='de'?`<div class="form-group"><label>Tone / 聲調</label>
         <div class="tone-toggles" id="aw-tone-toggles">
@@ -1955,6 +1965,7 @@ function showAddWordModal() {
     </form>
   `);
   setupCategorySelect('aw-category');
+  document.getElementById('aw-word').addEventListener('blur', ()=> checkWordDupe('aw-word','aw-dupe-warn'));
 }
 
 function renderLangFields(lang, prefix) {
@@ -2046,6 +2057,41 @@ function syncToneToggles(toggleContainerId, inputId) {
       b.classList.toggle('active', ps.includes(b.dataset.tone));
     });
   });
+}
+
+function checkWordDupe(inputId, warnId) {
+  const val = document.getElementById(inputId).value.trim();
+  const warn = document.getElementById(warnId);
+  if (!warn) return;
+  if (!val) { warn.innerHTML = ''; return; }
+  const lang = state.filter.lang;
+  const dupe = state.vocabulary.find(v =>
+    v.lang === lang && v.word.trim().toLowerCase() === val.toLowerCase()
+  );
+  if (dupe) {
+    const folder = dupe.category || 'Unfiled';
+    warn.innerHTML = `<div class="dupe-warn"><i class="fas fa-exclamation-triangle"></i><span><b>"${esc(val)}"</b> already exists in <b>${esc(folder)}</b><br>Meaning: ${esc(dupe.meaning)}</span></div>`;
+  } else {
+    warn.innerHTML = '';
+  }
+}
+
+function checkGrammarDupe(inputId, warnId) {
+  const val = document.getElementById(inputId).value.trim();
+  const warn = document.getElementById(warnId);
+  if (!warn) return;
+  if (!val) { warn.innerHTML = ''; return; }
+  const lang = state.filter.lang;
+  const dupe = state.grammar.find(g =>
+    g.lang === lang && g.pattern.trim().toLowerCase() === val.toLowerCase()
+  );
+  if (dupe) {
+    const folder = dupe.category || 'Unfiled';
+    const expl = dupe.explanation.length > 60 ? dupe.explanation.substring(0,60) + '…' : dupe.explanation;
+    warn.innerHTML = `<div class="dupe-warn"><i class="fas fa-exclamation-triangle"></i><span><b>"${esc(val)}"</b> already exists in <b>${esc(folder)}</b><br>${esc(expl)}</span></div>`;
+  } else {
+    warn.innerHTML = '';
+  }
 }
 
 function handleAddWord(e) {
@@ -2301,7 +2347,7 @@ function showAddGrammarModal() {
   showModal(`
     <h2>Add Grammar</h2>
     <form onsubmit="handleAddGrammar(event)">
-      <div class="form-group"><label>Pattern / Rule</label><input id="ag-pattern" lang="${langAttr(state.filter.lang)}" required placeholder="e.g. ～てから、Perfekt mit haben"></div>
+      <div class="form-group"><label>Pattern / Rule</label><input id="ag-pattern" lang="${langAttr(state.filter.lang)}" required placeholder="e.g. ～てから、Perfekt mit haben"><div id="ag-dupe-warn"></div></div>
       <div class="form-group"><label>Explanation</label><textarea id="ag-explanation" lang="zh" required placeholder="這個文法是什麼意思？什麼時候用？"></textarea></div>
       <div class="form-group"><label>Examples</label><textarea id="ag-examples" lang="${langAttr(state.filter.lang)}" placeholder="One per line"></textarea></div>
       <div class="form-group"><label>Folder</label>${renderCategorySelect('ag-category',currentFolder,'grammar')}</div>
@@ -2312,6 +2358,7 @@ function showAddGrammarModal() {
     </form>
   `);
   setupCategorySelect('ag-category');
+  document.getElementById('ag-pattern').addEventListener('blur', ()=> checkGrammarDupe('ag-pattern','ag-dupe-warn'));
 }
 
 function handleAddGrammar(e) {
