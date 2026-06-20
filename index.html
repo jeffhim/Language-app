@@ -483,6 +483,10 @@ a{color:var(--accent);text-decoration:none}
 .dark .dupe-warn{background:#3e2e00;border-color:#b38600;color:#ffd54f}
 .dupe-warn i{flex-shrink:0;margin-top:2px;font-size:15px}
 .dupe-warn b{font-weight:700}
+.search-folder-tag{
+  display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;
+  color:var(--accent);background:var(--accent-glow);padding:2px 8px;border-radius:10px;
+}
 @keyframes fadeSlide{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes correctPop{0%{transform:scale(1)}50%{transform:scale(1.03)}100%{transform:scale(1)}}
 @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
@@ -1598,7 +1602,7 @@ function _wordFolderListHTML(lang, sq) {
   ${cats.length === 0 && uncatCount === 0 ? '<div class="empty-state"><div class="empty-icon">📂</div><h3>No folders yet</h3><p>Create a folder and start adding words!</p></div>' : ''}`;
 }
 
-function _wordItemListHTML(filtered) {
+function _wordItemListHTML(filtered, showFolder) {
   return filtered.length === 0 ? '<div class="empty-state"><div class="empty-icon">📝</div><h3>No words here</h3><p>Tap + to add vocabulary to this folder</p></div>' :
     filtered.map((v,i)=>`
       <div class="item-card stagger" style="animation-delay:${Math.min(i*0.03,0.5)}s" onclick="showEditWordModal('${v.id}')">
@@ -1614,6 +1618,7 @@ function _wordItemListHTML(filtered) {
         <div class="meaning">${esc(v.meaning)}</div>
         ${v.example?`<div class="example">${esc(v.example)}</div>`:''}
         <div class="meta">
+          ${showFolder?`<span class="search-folder-tag"><i class="fas fa-folder"></i> ${esc(v.category||'Unfiled')}</span>`:''}
           ${v.nextReview?`<span style="font-size:11px;color:var(--text-2)"><i class="fas fa-clock"></i> ${formatDate(v.nextReview)}</span>`:''}
         </div>
       </div>
@@ -1646,11 +1651,12 @@ function renderWords(searchOnly) {
     const folderName = folder === '__uncat' ? 'Unfiled' : folder;
     const filtered = getFilteredVocab();
 
+    const showFolder = !!state.filter.search;
     // If just updating search results, only swap the list content
     if (searchOnly) {
       const listTarget = document.getElementById('word-list');
       const countEl = document.getElementById('words-count');
-      if (listTarget) { listTarget.innerHTML = _wordItemListHTML(filtered); if(countEl) countEl.textContent = '('+filtered.length+')'; return; }
+      if (listTarget) { listTarget.innerHTML = _wordItemListHTML(filtered, showFolder); if(countEl) countEl.textContent = '('+filtered.length+')'; return; }
     }
 
     el.innerHTML = `
@@ -1658,8 +1664,8 @@ function renderWords(searchOnly) {
       <div class="section-head"><h2><i class="fas fa-folder-open" style="color:var(--accent);font-size:18px"></i> ${esc(folderName)} <span id="words-count" style="color:var(--text-2);font-weight:400;font-size:16px">(${filtered.length})</span></h2>
         <button class="btn btn-ghost btn-sm" onclick="showBatchAddModal()" title="Batch Add"><i class="fas fa-list-check"></i> Batch</button>
       </div>
-      <div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search words..." value="${esc(state.filter.search)}" oninput="setSearch(this.value)"></div>
-      <div id="word-list">${_wordItemListHTML(filtered)}</div>
+      <div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search all words..." value="${esc(state.filter.search)}" oninput="setSearch(this.value)"></div>
+      <div id="word-list">${_wordItemListHTML(filtered, showFolder)}</div>
       <button class="fab" onclick="showAddWordModal()"><i class="fas fa-plus"></i></button>
     `;
   }
@@ -1668,11 +1674,12 @@ function renderWords(searchOnly) {
 function getFilteredVocab() {
   let arr = [...state.vocabulary];
   if(state.filter.lang!=='all') arr = arr.filter(v=>v.lang===state.filter.lang);
-  if(state.filter.openFolder !== null) {
+  const hasSearch = !!state.filter.search;
+  if(!hasSearch && state.filter.openFolder !== null) {
     if(state.filter.openFolder==='__uncat') arr = arr.filter(v=>!v.category);
     else arr = arr.filter(v=>v.category===state.filter.openFolder);
   }
-  if(state.filter.search) {
+  if(hasSearch) {
     const q = state.filter.search.toLowerCase();
     arr = arr.filter(v=>
       v.word.toLowerCase().includes(q) || v.meaning.toLowerCase().includes(q) ||
@@ -2271,7 +2278,7 @@ function _gramFolderListHTML(lang, sq) {
   ${cats.length === 0 && uncatCount === 0 ? '<div class="empty-state"><div class="empty-icon">📂</div><h3>No folders yet</h3><p>Create a folder and start adding grammar!</p></div>' : ''}`;
 }
 
-function _gramItemListHTML(filtered) {
+function _gramItemListHTML(filtered, showFolder) {
   return filtered.length===0?'<div class="empty-state"><div class="empty-icon">📝</div><h3>No grammar here</h3><p>Tap + to add grammar to this folder</p></div>':
     filtered.map((g,i)=>`
       <div class="item-card stagger" style="animation-delay:${Math.min(i*0.03,0.5)}s" onclick="showEditGrammarModal('${g.id}')">
@@ -2281,7 +2288,9 @@ function _gramItemListHTML(filtered) {
         </div>
         <div class="meaning" style="margin-top:6px">${esc(g.explanation).substring(0,100)}${g.explanation.length>100?'...':''}</div>
         ${g.examples?`<div class="example">${esc(g.examples).substring(0,120)}</div>`:''}
-        <div class="meta"></div>
+        <div class="meta">
+          ${showFolder?`<span class="search-folder-tag"><i class="fas fa-folder"></i> ${esc(g.category||'Unfiled')}</span>`:''}
+        </div>
       </div>
     `).join('');
 }
@@ -2308,18 +2317,19 @@ function renderGrammar(searchOnly) {
   } else {
     const folderName = folder === '__uncat' ? 'Unfiled' : folder;
     const filtered = getFilteredGrammar();
+    const showFolder = !!state.filter.search;
 
     if (searchOnly) {
       const listTarget = document.getElementById('grammar-list');
       const countEl = document.getElementById('grammar-count');
-      if (listTarget) { listTarget.innerHTML = _gramItemListHTML(filtered); if(countEl) countEl.textContent = '('+filtered.length+')'; return; }
+      if (listTarget) { listTarget.innerHTML = _gramItemListHTML(filtered, showFolder); if(countEl) countEl.textContent = '('+filtered.length+')'; return; }
     }
 
     el.innerHTML = `
       <button class="folder-back" onclick="closeFolder()"><i class="fas fa-arrow-left"></i> All Folders</button>
       <div class="section-head"><h2><i class="fas fa-folder-open" style="color:var(--accent);font-size:18px"></i> ${esc(folderName)} <span id="grammar-count" style="color:var(--text-2);font-weight:400;font-size:16px">(${filtered.length})</span></h2></div>
-      <div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search grammar..." value="${esc(state.filter.search)}" oninput="setGramSearch(this.value)"></div>
-      <div id="grammar-list">${_gramItemListHTML(filtered)}</div>
+      <div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search all grammar..." value="${esc(state.filter.search)}" oninput="setGramSearch(this.value)"></div>
+      <div id="grammar-list">${_gramItemListHTML(filtered, showFolder)}</div>
       <button class="fab" onclick="showAddGrammarModal()"><i class="fas fa-plus"></i></button>
     `;
   }
@@ -2328,11 +2338,12 @@ function renderGrammar(searchOnly) {
 function getFilteredGrammar() {
   let arr = [...state.grammar];
   if(state.filter.lang!=='all') arr = arr.filter(g=>g.lang===state.filter.lang);
-  if(state.filter.openFolder !== null) {
+  const hasSearch = !!state.filter.search;
+  if(!hasSearch && state.filter.openFolder !== null) {
     if(state.filter.openFolder==='__uncat') arr = arr.filter(g=>!g.category);
     else arr = arr.filter(g=>g.category===state.filter.openFolder);
   }
-  if(state.filter.search){
+  if(hasSearch){
     const q=state.filter.search.toLowerCase();
     arr=arr.filter(g=>g.pattern.toLowerCase().includes(q)||g.explanation.toLowerCase().includes(q)||g.tags.toLowerCase().includes(q)||(g.category||'').toLowerCase().includes(q));
   }
