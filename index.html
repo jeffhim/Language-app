@@ -1220,7 +1220,8 @@ function _wordFolderListHTML(lang, sq) {
     if (matches.length === 0) return '<div class="empty-state"><div class="empty-icon">🔍</div><h3>No matches</h3></div>';
     return `<div style="font-size:13px;color:var(--text-2);margin-bottom:8px;font-weight:600">${matches.length} result${matches.length!==1?'s':''}</div>` + matches.map((v,i)=>`<div class="item-card stagger" style="animation-delay:${Math.min(i*0.03,0.5)}s" onclick="showEditWordModal('${v.id}')"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div style="flex:1;min-width:0"><div class="word">${esc(v.word)}</div>${v.reading?`<div class="reading">${esc(v.reading)}${v.tone?` <span style="opacity:0.7;font-size:12px">[${esc(v.tone)}]</span>`:''}</div>`:''}</div><button class="btn-move-folder" onclick="event.stopPropagation();showMoveToFolder('${v.id}','vocab')" title="Move"><i class="fas fa-folder-arrow-down"></i></button></div><div class="meaning">${esc(v.meaning)}</div><div class="meta">${v.category?`<span class="search-folder-tag"><i class="fas fa-folder"></i> ${esc(v.category)}</span>`:''}</div></div>`).join('');
   }
-  const cats = getUsedCategories(lang, 'vocab'); const uncatCount = pool.filter(v => !v.category).length;
+  const allCats = getUsedCategories(lang, 'vocab'); const uncatCount = pool.filter(v => !v.category).length;
+  const cats = allCats.filter(c => pool.some(v => v.category === c));
   const hasLevels = getLevelsForLang(lang).length > 0;
   return `<div class="folder-list">${cats.map((c,i) => { const count = pool.filter(v => v.category === c).length; return `<div class="folder-row stagger" style="animation-delay:${Math.min(i*0.03,0.4)}s"><div class="folder-icon"><i class="fas fa-folder"></i></div><div class="folder-info" onclick="openFolder('${esc(c)}','words')"><div class="folder-name">${esc(c)}</div><div class="folder-count">${count} word${count!==1?'s':''}</div></div><div class="folder-actions">${hasLevels?`<button title="Move folder to level" onclick="showBatchMoveToLevel('${esc(c)}','vocab')"><i class="fas fa-layer-group"></i></button>`:''}<button class="move-up" title="Move up" onclick="moveFolder('${esc(c)}',-1,'words')" ${i===0?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-up"></i></button><button class="move-down" title="Move down" onclick="moveFolder('${esc(c)}',1,'words')" ${i===cats.length-1?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-down"></i></button><button class="edit-btn" title="Rename / Delete" onclick="showFolderOptionsPrompt('${esc(c)}','words')"><i class="fas fa-ellipsis-vertical"></i></button></div></div>`; }).join('')}${uncatCount > 0 ? `<div class="folder-row stagger"><div class="folder-icon"><i class="fas fa-folder-open" style="color:var(--text-2)"></i></div><div class="folder-info" onclick="openFolder('__uncat','words')"><div class="folder-name">Unfiled</div><div class="folder-count">${uncatCount} word${uncatCount!==1?'s':''}</div></div></div>` : ''}<div class="folder-row add-folder stagger" onclick="showCreateFolderPrompt('words')"><div class="folder-icon"><i class="fas fa-folder-plus"></i></div><div class="add-label">New Folder</div></div></div>`;
 }
@@ -1419,28 +1420,36 @@ function showFolderOptionsPrompt(name, view) {
   document.body.appendChild(el); const input = el.querySelector('#rename-folder-input'); setTimeout(() => { input.focus(); input.select(); }, 100);
   el.querySelector('#folder-rename-ok').addEventListener('click', () => { const newName = input.value.trim(); if (!newName) { showToast('Enter a folder name', 'error'); return; } if (newName !== name) renameFolder(name, newName, view); el.remove(); });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); el.querySelector('#folder-rename-ok').click(); } });
-  el.querySelector('#folder-delete-btn').addEventListener('click', () => { el.remove(); showConfirm('Delete folder "' + name + '"? Items inside will become Unfiled.', () => { deleteFolder(name, view); }); });
+  el.querySelector('#folder-delete-btn').addEventListener('click', () => { el.remove(); const lvLabel = state.filter.level ? (state.filter.level === '__none' ? 'No Level' : state.filter.level) : ''; showConfirm('Delete folder "' + name + '"' + (lvLabel ? ' in ' + lvLabel : '') + '? Items inside will become Unfiled.', () => { deleteFolder(name, view); }); });
   el.addEventListener('click', (e) => { if (e.target === el) el.remove(); });
+}
+
+function _matchesCurrentLevel(item) {
+  const lv = state.filter.level;
+  if (lv === null) return true;
+  if (lv === '__none') return !item.level;
+  return item.level === lv;
 }
 
 function renameFolder(oldName, newName, view) {
   const lang = state.filter.lang; const type = viewToType(view); const arr = getLangCatList(lang, type);
-  const idx = arr.indexOf(oldName); if (idx >= 0) arr[idx] = newName; saveConfig();
+  const idx = arr.indexOf(oldName); if (idx >= 0) { if (!arr.includes(newName)) arr[idx] = newName; } saveConfig();
   syncManager.push(() => api.saveRemoteConfig('langCategories', state.config.langCategories), 'sync folders');
-  if (type === 'vocab') { state.vocabulary.forEach(v => { if (v.category === oldName && v.lang === lang) { v.category = newName; syncManager.push(() => api.update('Vocabulary', v.id, v), 'rename'); } }); saveVocab(); }
-  else { state.grammar.forEach(g => { if (g.category === oldName && g.lang === lang) { g.category = newName; syncManager.push(() => api.update('Grammar', g.id, g), 'rename'); } }); saveGrammar(); }
+  if (type === 'vocab') { state.vocabulary.forEach(v => { if (v.category === oldName && v.lang === lang && _matchesCurrentLevel(v)) { v.category = newName; syncManager.push(() => api.update('Vocabulary', v.id, v), 'rename'); } }); saveVocab(); }
+  else { state.grammar.forEach(g => { if (g.category === oldName && g.lang === lang && _matchesCurrentLevel(g)) { g.category = newName; syncManager.push(() => api.update('Grammar', g.id, g), 'rename'); } }); saveGrammar(); }
   if (state.filter.openFolder === oldName) state.filter.openFolder = newName;
-  showToast('Folder renamed', 'success'); renderCurrentView();
+  showToast('Folder renamed (current level only)', 'success'); renderCurrentView();
 }
 
 function deleteFolder(name, view) {
-  const lang = state.filter.lang; const type = viewToType(view); const arr = getLangCatList(lang, type);
-  const idx = arr.indexOf(name); if (idx >= 0) arr.splice(idx, 1); saveConfig();
-  syncManager.push(() => api.saveRemoteConfig('langCategories', state.config.langCategories), 'sync folders');
-  if (type === 'vocab') { state.vocabulary.forEach(v => { if (v.category === name && v.lang === lang) { v.category = ''; syncManager.push(() => api.update('Vocabulary', v.id, v), 'del folder'); } }); saveVocab(); }
-  else { state.grammar.forEach(g => { if (g.category === name && g.lang === lang) { g.category = ''; syncManager.push(() => api.update('Grammar', g.id, g), 'del folder'); } }); saveGrammar(); }
+  const lang = state.filter.lang; const type = viewToType(view);
+  if (type === 'vocab') { state.vocabulary.forEach(v => { if (v.category === name && v.lang === lang && _matchesCurrentLevel(v)) { v.category = ''; syncManager.push(() => api.update('Vocabulary', v.id, v), 'del folder'); } }); saveVocab(); }
+  else { state.grammar.forEach(g => { if (g.category === name && g.lang === lang && _matchesCurrentLevel(g)) { g.category = ''; syncManager.push(() => api.update('Grammar', g.id, g), 'del folder'); } }); saveGrammar(); }
+  const arr = getLangCatList(lang, type);
+  const stillUsed = (type === 'vocab') ? state.vocabulary.some(v => v.lang === lang && v.category === name) : state.grammar.some(g => g.lang === lang && g.category === name);
+  if (!stillUsed) { const idx = arr.indexOf(name); if (idx >= 0) arr.splice(idx, 1); saveConfig(); syncManager.push(() => api.saveRemoteConfig('langCategories', state.config.langCategories), 'sync folders'); }
   if (state.filter.openFolder === name) state.filter.openFolder = null;
-  showToast('Folder deleted', 'info'); renderCurrentView();
+  showToast('Folder deleted (current level only)', 'info'); renderCurrentView();
 }
 
 const setSearch = debounce(val=>{ state.filter.search=val; renderWords(true); }, 250);
@@ -1490,7 +1499,8 @@ function _gramFolderListHTML(lang, sq) {
   const lv = state.filter.level; let pool = state.grammar.filter(g => g.lang === lang);
   if (lv !== null) { if (lv === '__none') pool = pool.filter(g => !g.level); else pool = pool.filter(g => g.level === lv); }
   if (sq) { const matches = pool.filter(g => g.pattern.toLowerCase().includes(sq) || g.explanation.toLowerCase().includes(sq) || (g.category||'').toLowerCase().includes(sq)).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')); if (matches.length === 0) return '<div class="empty-state"><div class="empty-icon">🔍</div><h3>No matches</h3></div>'; return `<div style="font-size:13px;color:var(--text-2);margin-bottom:8px;font-weight:600">${matches.length} result${matches.length!==1?'s':''}</div>` + matches.map((g,i)=>`<div class="item-card stagger" style="animation-delay:${Math.min(i*0.03,0.5)}s" onclick="showEditGrammarModal('${g.id}')"><div class="word" style="font-size:18px">${esc(g.pattern)}</div><div class="meaning" style="margin-top:6px">${esc(g.explanation).substring(0,100)}</div><div class="meta">${g.category?`<span class="search-folder-tag"><i class="fas fa-folder"></i> ${esc(g.category)}</span>`:''}</div></div>`).join(''); }
-  const cats = getUsedCategories(lang, 'grammar'); const uncatCount = pool.filter(g => !g.category).length;
+  const allCats = getUsedCategories(lang, 'grammar'); const uncatCount = pool.filter(g => !g.category).length;
+  const cats = allCats.filter(c => pool.some(g => g.category === c));
   const hasLevels = getLevelsForLang(lang).length > 0;
   return `<div class="folder-list">${cats.map((c,i) => { const count = pool.filter(g => g.category === c).length; return `<div class="folder-row stagger" style="animation-delay:${Math.min(i*0.03,0.4)}s"><div class="folder-icon"><i class="fas fa-folder"></i></div><div class="folder-info" onclick="openFolder('${esc(c)}','grammar')"><div class="folder-name">${esc(c)}</div><div class="folder-count">${count} rule${count!==1?'s':''}</div></div><div class="folder-actions">${hasLevels?`<button title="Move folder to level" onclick="showBatchMoveToLevel('${esc(c)}','grammar')"><i class="fas fa-layer-group"></i></button>`:''}<button class="move-up" onclick="moveFolder('${esc(c)}',-1,'grammar')" ${i===0?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-up"></i></button><button class="move-down" onclick="moveFolder('${esc(c)}',1,'grammar')" ${i===cats.length-1?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-down"></i></button><button class="edit-btn" onclick="showFolderOptionsPrompt('${esc(c)}','grammar')"><i class="fas fa-ellipsis-vertical"></i></button></div></div>`; }).join('')}${uncatCount > 0 ? `<div class="folder-row stagger"><div class="folder-icon"><i class="fas fa-folder-open" style="color:var(--text-2)"></i></div><div class="folder-info" onclick="openFolder('__uncat','grammar')"><div class="folder-name">Unfiled</div><div class="folder-count">${uncatCount} rule${uncatCount!==1?'s':''}</div></div></div>` : ''}<div class="folder-row add-folder stagger" onclick="showCreateFolderPrompt('grammar')"><div class="folder-icon"><i class="fas fa-folder-plus"></i></div><div class="add-label">New Folder</div></div></div>`;
 }
