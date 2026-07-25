@@ -695,22 +695,33 @@ if ('serviceWorker' in navigator) {
 const LANGS = {
   ja:{emoji:'🇯🇵',name:'日本語',label:'Japanese',fields:[
     {key:'reading',label:'Reading (読み)',placeholder:'ひらがな / カタカナ',type:'text'},
-  ],levels:['N5','N4','N3','N2','N1']},
+  ],defaultLevels:['N5','N4','N3','N2','N1']},
   de:{emoji:'🇩🇪',name:'Deutsch',label:'German',fields:[
     {key:'article',label:'Article',type:'toggles',options:['der','die','das']},
     {key:'plural',label:'Plural',placeholder:'Plural form',type:'text'},
-  ],levels:['A1','A2','B1','B2','C1','C2']},
+  ],defaultLevels:['A1','A2','B1','B2','C1','C2']},
   zh:{emoji:'🇨🇳',name:'中文',label:'Chinese',fields:[
     {key:'reading',label:'Pinyin',placeholder:'pīnyīn',type:'text'},
-  ],levels:['HSK 1','HSK 2','HSK 3','HSK 4','HSK 5','HSK 6']},
-  ko:{emoji:'🇰🇷',name:'한국어',label:'Korean',fields:[],levels:['TOPIK I','TOPIK II']},
-  fr:{emoji:'🇫🇷',name:'Français',label:'French',fields:[],levels:['A1','A2','B1','B2','C1','C2']},
-  es:{emoji:'🇪🇸',name:'Español',label:'Spanish',fields:[],levels:['A1','A2','B1','B2','C1','C2']},
-  it:{emoji:'🇮🇹',name:'Italiano',label:'Italian',fields:[],levels:['A1','A2','B1','B2','C1','C2']},
-  pt:{emoji:'🇵🇹',name:'Português',label:'Portuguese',fields:[],levels:['A1','A2','B1','B2','C1','C2']},
-  ru:{emoji:'🇷🇺',name:'Русский',label:'Russian',fields:[],levels:['A1','A2','B1','B2','C1','C2']},
-  cs:{emoji:'🇨🇿',name:'Čeština',label:'Czech',fields:[],levels:['A1','A2','B1','B2','C1','C2']},
+  ],defaultLevels:['HSK 1','HSK 2','HSK 3','HSK 4','HSK 5','HSK 6']},
+  ko:{emoji:'🇰🇷',name:'한국어',label:'Korean',fields:[],defaultLevels:['TOPIK I','TOPIK II']},
+  fr:{emoji:'🇫🇷',name:'Français',label:'French',fields:[],defaultLevels:['A1','A2','B1','B2','C1','C2']},
+  es:{emoji:'🇪🇸',name:'Español',label:'Spanish',fields:[],defaultLevels:['A1','A2','B1','B2','C1','C2']},
+  it:{emoji:'🇮🇹',name:'Italiano',label:'Italian',fields:[],defaultLevels:['A1','A2','B1','B2','C1','C2']},
+  pt:{emoji:'🇵🇹',name:'Português',label:'Portuguese',fields:[],defaultLevels:['A1','A2','B1','B2','C1','C2']},
+  ru:{emoji:'🇷🇺',name:'Русский',label:'Russian',fields:[],defaultLevels:['A1','A2','B1','B2','C1','C2']},
+  cs:{emoji:'🇨🇿',name:'Čeština',label:'Czech',fields:[],defaultLevels:['A1','A2','B1','B2','C1','C2']},
 };
+
+function getLevelsForLang(lang) {
+  if (state.config.langLevels && state.config.langLevels[lang]) return state.config.langLevels[lang];
+  const def = LANGS[lang]; if (!def) return [];
+  return def.defaultLevels ? [...def.defaultLevels] : (def.levels ? [...def.levels] : []);
+}
+function setLevelsForLang(lang, levels) {
+  if (!state.config.langLevels) state.config.langLevels = {};
+  state.config.langLevels[lang] = levels; saveConfig();
+  syncManager.push(() => api.saveRemoteConfig('langLevels', state.config.langLevels), 'sync levels');
+}
 
 const QUIZ_TYPES = [
   {id:'mc-meaning',name:'Meaning',desc:'Pick the correct meaning',icon:'fa-circle-check'},
@@ -874,6 +885,13 @@ const syncManager = {
         if (remoteLangCats) { state.config.langCategories = Object.assign({}, localLangCats, remoteLangCats); saveConfig(); }
         else if (hasLocalCats) { try { await api.saveRemoteConfig('langCategories', localLangCats); } catch(e2) {} }
       } catch(configErr) {}
+      try {
+        const remoteLangLevels = await api.loadRemoteConfig('langLevels');
+        const localLangLevels = state.config.langLevels || {};
+        const hasLocalLevels = Object.keys(localLangLevels).some(k => localLangLevels[k] && localLangLevels[k].length > 0);
+        if (remoteLangLevels) { state.config.langLevels = Object.assign({}, localLangLevels, remoteLangLevels); saveConfig(); }
+        else if (hasLocalLevels) { try { await api.saveRemoteConfig('langLevels', localLangLevels); } catch(e2) {} }
+      } catch(configErr) {}
       state.vocabulary = _mergeItems(localVocab, remoteVocab, 'vocab');
       state.grammar = _mergeItems(localGrammar, remoteGrammar, 'grammar');
       saveVocab(); saveGrammar(); dedupLocalState();
@@ -910,6 +928,7 @@ const syncManager = {
         showToast('Uploading... ' + Math.min(i + BATCH, allItems.length) + '/' + totalItems, 'info');
       }
       try { await api.saveRemoteConfig('langCategories', state.config.langCategories || {}); } catch(e) {}
+      try { await api.saveRemoteConfig('langLevels', state.config.langLevels || {}); } catch(e) {}
       this.setState('saved'); renderCurrentView();
       const msg = 'Synced ' + added + '/' + totalItems + ' items';
       showToast(errors.length > 0 ? msg + ' (' + errors.length + ' errors)' : msg + ' ✓', errors.length > 0 ? 'error' : 'success');
@@ -1202,7 +1221,8 @@ function _wordFolderListHTML(lang, sq) {
     return `<div style="font-size:13px;color:var(--text-2);margin-bottom:8px;font-weight:600">${matches.length} result${matches.length!==1?'s':''}</div>` + matches.map((v,i)=>`<div class="item-card stagger" style="animation-delay:${Math.min(i*0.03,0.5)}s" onclick="showEditWordModal('${v.id}')"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div style="flex:1;min-width:0"><div class="word">${esc(v.word)}</div>${v.reading?`<div class="reading">${esc(v.reading)}${v.tone?` <span style="opacity:0.7;font-size:12px">[${esc(v.tone)}]</span>`:''}</div>`:''}</div><button class="btn-move-folder" onclick="event.stopPropagation();showMoveToFolder('${v.id}','vocab')" title="Move"><i class="fas fa-folder-arrow-down"></i></button></div><div class="meaning">${esc(v.meaning)}</div><div class="meta">${v.category?`<span class="search-folder-tag"><i class="fas fa-folder"></i> ${esc(v.category)}</span>`:''}</div></div>`).join('');
   }
   const cats = getUsedCategories(lang, 'vocab'); const uncatCount = pool.filter(v => !v.category).length;
-  return `<div class="folder-list">${cats.map((c,i) => { const count = pool.filter(v => v.category === c).length; return `<div class="folder-row stagger" style="animation-delay:${Math.min(i*0.03,0.4)}s"><div class="folder-icon"><i class="fas fa-folder"></i></div><div class="folder-info" onclick="openFolder('${esc(c)}','words')"><div class="folder-name">${esc(c)}</div><div class="folder-count">${count} word${count!==1?'s':''}</div></div><div class="folder-actions"><button class="move-up" title="Move up" onclick="moveFolder('${esc(c)}',-1,'words')" ${i===0?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-up"></i></button><button class="move-down" title="Move down" onclick="moveFolder('${esc(c)}',1,'words')" ${i===cats.length-1?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-down"></i></button><button class="edit-btn" title="Rename / Delete" onclick="showFolderOptionsPrompt('${esc(c)}','words')"><i class="fas fa-ellipsis-vertical"></i></button></div></div>`; }).join('')}${uncatCount > 0 ? `<div class="folder-row stagger"><div class="folder-icon"><i class="fas fa-folder-open" style="color:var(--text-2)"></i></div><div class="folder-info" onclick="openFolder('__uncat','words')"><div class="folder-name">Unfiled</div><div class="folder-count">${uncatCount} word${uncatCount!==1?'s':''}</div></div></div>` : ''}<div class="folder-row add-folder stagger" onclick="showCreateFolderPrompt('words')"><div class="folder-icon"><i class="fas fa-folder-plus"></i></div><div class="add-label">New Folder</div></div></div>`;
+  const hasLevels = getLevelsForLang(lang).length > 0;
+  return `<div class="folder-list">${cats.map((c,i) => { const count = pool.filter(v => v.category === c).length; return `<div class="folder-row stagger" style="animation-delay:${Math.min(i*0.03,0.4)}s"><div class="folder-icon"><i class="fas fa-folder"></i></div><div class="folder-info" onclick="openFolder('${esc(c)}','words')"><div class="folder-name">${esc(c)}</div><div class="folder-count">${count} word${count!==1?'s':''}</div></div><div class="folder-actions">${hasLevels?`<button title="Move folder to level" onclick="showBatchMoveToLevel('${esc(c)}','vocab')"><i class="fas fa-layer-group"></i></button>`:''}<button class="move-up" title="Move up" onclick="moveFolder('${esc(c)}',-1,'words')" ${i===0?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-up"></i></button><button class="move-down" title="Move down" onclick="moveFolder('${esc(c)}',1,'words')" ${i===cats.length-1?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-down"></i></button><button class="edit-btn" title="Rename / Delete" onclick="showFolderOptionsPrompt('${esc(c)}','words')"><i class="fas fa-ellipsis-vertical"></i></button></div></div>`; }).join('')}${uncatCount > 0 ? `<div class="folder-row stagger"><div class="folder-icon"><i class="fas fa-folder-open" style="color:var(--text-2)"></i></div><div class="folder-info" onclick="openFolder('__uncat','words')"><div class="folder-name">Unfiled</div><div class="folder-count">${uncatCount} word${uncatCount!==1?'s':''}</div></div></div>` : ''}<div class="folder-row add-folder stagger" onclick="showCreateFolderPrompt('words')"><div class="folder-icon"><i class="fas fa-folder-plus"></i></div><div class="add-label">New Folder</div></div></div>`;
 }
 
 function _wordItemListHTML(filtered, showFolder) {
@@ -1212,18 +1232,18 @@ function _wordItemListHTML(filtered, showFolder) {
 
 function renderWords(searchOnly) {
   const el = document.getElementById('view-words'); const lang = state.filter.lang;
-  const langDef = LANGS[lang] || {}; const levels = langDef.levels || [];
+  const levels = getLevelsForLang(lang);
   if (state.filter.level === null && levels.length > 0) {
     const sq = state.filter.search ? state.filter.search.toLowerCase() : '';
     if (searchOnly) { const t = document.getElementById('words-level-results'); if (t) { t.innerHTML = _wordLevelListHTML(lang, levels, sq); return; } }
-    el.innerHTML = `<div class="section-head"><h2>Vocabulary</h2><button class="btn btn-ghost btn-sm" onclick="showBatchAddModal()" title="Batch Add"><i class="fas fa-list-check"></i> Batch</button></div><div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search all words..." value="${esc(state.filter.search)}" oninput="setWordFolderSearch(this.value)"></div><div id="words-level-results">${_wordLevelListHTML(lang, levels, sq)}</div><button class="fab" onclick="showAddWordModal()"><i class="fas fa-plus"></i></button>`;
+    el.innerHTML = `<div class="section-head"><h2>Vocabulary</h2><div style="display:flex;gap:4px"><button class="btn btn-ghost btn-sm" onclick="showLevelManager()" title="Manage Levels"><i class="fas fa-layer-group"></i></button><button class="btn btn-ghost btn-sm" onclick="showBatchAddModal()" title="Batch Add"><i class="fas fa-list-check"></i> Batch</button></div></div><div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search all words..." value="${esc(state.filter.search)}" oninput="setWordFolderSearch(this.value)"></div><div id="words-level-results">${_wordLevelListHTML(lang, levels, sq)}</div><button class="fab" onclick="showAddWordModal()"><i class="fas fa-plus"></i></button>`;
     return;
   }
   const folder = state.filter.openFolder;
   if (folder === null) {
     const sq = state.filter.search ? state.filter.search.toLowerCase() : '';
     if (searchOnly) { const t = document.getElementById('words-folder-results'); if (t) { t.innerHTML = _wordFolderListHTML(lang, sq); return; } }
-    el.innerHTML = `${levels.length > 0 ? `<button class="folder-back" onclick="closeLevel()"><i class="fas fa-arrow-left"></i> All Levels</button>` : ''}<div class="section-head"><h2>Vocabulary ${state.filter.level ? `<span class="level-badge">${esc(state.filter.level==='__none'?'No Level':state.filter.level)}</span>` : ''}</h2><button class="btn btn-ghost btn-sm" onclick="showBatchAddModal()" title="Batch Add"><i class="fas fa-list-check"></i> Batch</button></div><div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search all words..." value="${esc(state.filter.search)}" oninput="setWordFolderSearch(this.value)"></div><div id="words-folder-results">${_wordFolderListHTML(lang, sq)}</div><button class="fab" onclick="showAddWordModal()"><i class="fas fa-plus"></i></button>`;
+    el.innerHTML = `${levels.length > 0 ? `<button class="folder-back" onclick="closeLevel()"><i class="fas fa-arrow-left"></i> All Levels</button>` : ''}<div class="section-head"><h2>Vocabulary ${state.filter.level ? `<span class="level-badge">${esc(state.filter.level==='__none'?'No Level':state.filter.level)}</span>` : ''}</h2><div style="display:flex;gap:4px"><button class="btn btn-ghost btn-sm" onclick="showLevelManager()" title="Manage Levels"><i class="fas fa-layer-group"></i></button><button class="btn btn-ghost btn-sm" onclick="showBatchAddModal()" title="Batch Add"><i class="fas fa-list-check"></i> Batch</button></div></div><div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search all words..." value="${esc(state.filter.search)}" oninput="setWordFolderSearch(this.value)"></div><div id="words-folder-results">${_wordFolderListHTML(lang, sq)}</div><button class="fab" onclick="showAddWordModal()"><i class="fas fa-plus"></i></button>`;
   } else {
     const folderName = folder === '__uncat' ? 'Unfiled' : folder; const filtered = getFilteredVocab(); const showFolder = !!state.filter.search;
     if (searchOnly) { const t = document.getElementById('word-list'); const c = document.getElementById('words-count'); if (t) { t.innerHTML = _wordItemListHTML(filtered, showFolder); if(c) c.textContent = '('+filtered.length+')'; return; } }
@@ -1244,6 +1264,122 @@ function openFolder(name, view) { state.filter.openFolder = name; state.filter.s
 function closeFolder() { state.filter.openFolder = null; state.filter.search = ''; renderCurrentView(); }
 function openLevel(level) { state.filter.level = level; state.filter.openFolder = null; state.filter.search = ''; renderCurrentView(); }
 function closeLevel() { state.filter.level = null; state.filter.openFolder = null; state.filter.search = ''; renderCurrentView(); }
+
+/* Level Management */
+function showLevelManager() {
+  const lang = state.filter.lang; const levels = getLevelsForLang(lang); const langName = langLabel(lang);
+  let html = `<h2 style="font-size:18px"><i class="fas fa-layer-group" style="color:var(--accent)"></i> Manage Levels — ${esc(langName)}</h2>`;
+  html += `<p style="font-size:13px;color:var(--text-1);margin-bottom:14px;font-weight:600">Add, rename, reorder, or delete levels for this language.</p>`;
+  html += `<div id="level-mgr-list" style="margin-bottom:14px">`;
+  if (levels.length === 0) { html += `<div class="empty-state" style="padding:16px"><div class="empty-icon">📊</div><h3 style="font-size:15px">No levels yet</h3><p style="font-size:13px">Add your first level below.</p></div>`; }
+  else { levels.forEach((lv, i) => {
+    const vCount = state.vocabulary.filter(v => v.lang === lang && v.level === lv).length;
+    const gCount = state.grammar.filter(g => g.lang === lang && g.level === lv).length;
+    html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:2px solid var(--border-light);border-radius:var(--radius-sm);margin-bottom:6px;background:var(--bg-2)"><span style="flex:1;font-weight:700;font-size:14px">${esc(lv)}</span><span style="font-size:11px;color:var(--text-2);font-weight:600">${vCount+gCount} items</span><button class="btn btn-ghost btn-sm" onclick="renameLevelPrompt('${esc(lv)}')" title="Rename" style="padding:4px 6px"><i class="fas fa-pen" style="font-size:11px"></i></button><button class="btn btn-ghost btn-sm" onclick="moveLevelOrder('${esc(lv)}',-1)" title="Move up" style="padding:4px 6px" ${i===0?'disabled':''}><i class="fas fa-chevron-up" style="font-size:11px"></i></button><button class="btn btn-ghost btn-sm" onclick="moveLevelOrder('${esc(lv)}',1)" title="Move down" style="padding:4px 6px" ${i===levels.length-1?'disabled':''}><i class="fas fa-chevron-down" style="font-size:11px"></i></button><button class="btn btn-ghost btn-sm" onclick="deleteLevelPrompt('${esc(lv)}')" title="Delete" style="padding:4px 6px;color:var(--error)"><i class="fas fa-trash" style="font-size:11px"></i></button></div>`;
+  }); }
+  html += `</div>`;
+  html += `<div style="display:flex;gap:8px;margin-bottom:14px"><input id="new-level-input" placeholder="New level name..." style="flex:1;padding:8px 12px;border:2px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-0);color:var(--text-0);font-size:15px;outline:none"><button class="btn btn-primary btn-sm" onclick="addNewLevel()"><i class="fas fa-plus"></i> Add</button></div>`;
+  html += `<div class="modal-actions"><button class="btn btn-secondary btn-block" onclick="closeModal()">Done</button></div>`;
+  showModal(html);
+  setTimeout(() => { const inp = document.getElementById('new-level-input'); if (inp) inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addNewLevel(); } }); }, 100);
+}
+
+function addNewLevel() {
+  const inp = document.getElementById('new-level-input'); if (!inp) return;
+  const name = inp.value.trim(); if (!name) { showToast('Enter a level name', 'error'); return; }
+  const lang = state.filter.lang; const levels = getLevelsForLang(lang);
+  if (levels.includes(name)) { showToast('Level already exists', 'error'); return; }
+  levels.push(name); setLevelsForLang(lang, levels);
+  showToast('Level "' + name + '" added', 'success'); closeModal(); showLevelManager(); renderCurrentView();
+}
+
+function renameLevelPrompt(oldName) {
+  closeModal();
+  const el = document.createElement('div'); el.className = 'confirm-overlay';
+  el.innerHTML = `<div class="confirm-box"><p style="margin-bottom:10px;font-weight:700;font-size:16px"><i class="fas fa-pen" style="color:var(--accent)"></i> Rename Level</p><div class="form-group" style="margin-bottom:14px"><input id="rename-level-input" value="${esc(oldName)}" style="font-size:16px;width:100%;padding:10px 14px;border:2px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-0);color:var(--text-0);outline:none"></div><div class="btns"><button class="btn btn-secondary" onclick="this.closest('.confirm-overlay').remove();showLevelManager()">Cancel</button><button class="btn btn-primary" id="rename-level-ok">Save</button></div></div>`;
+  document.body.appendChild(el);
+  const input = el.querySelector('#rename-level-input'); setTimeout(() => { input.focus(); input.select(); }, 100);
+  el.querySelector('#rename-level-ok').addEventListener('click', () => {
+    const newName = input.value.trim(); if (!newName) { showToast('Enter a name', 'error'); return; }
+    if (newName === oldName) { el.remove(); showLevelManager(); return; }
+    const lang = state.filter.lang; const levels = getLevelsForLang(lang);
+    if (levels.includes(newName)) { showToast('Level already exists', 'error'); return; }
+    const idx = levels.indexOf(oldName); if (idx >= 0) levels[idx] = newName;
+    setLevelsForLang(lang, levels);
+    state.vocabulary.forEach(v => { if (v.lang === lang && v.level === oldName) { v.level = newName; syncManager.push(() => api.update('Vocabulary', v.id, v), 'rename level'); } }); saveVocab();
+    state.grammar.forEach(g => { if (g.lang === lang && g.level === oldName) { g.level = newName; syncManager.push(() => api.update('Grammar', g.id, g), 'rename level'); } }); saveGrammar();
+    if (state.filter.level === oldName) state.filter.level = newName;
+    el.remove(); showToast('Level renamed', 'success'); showLevelManager(); renderCurrentView();
+  });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); el.querySelector('#rename-level-ok').click(); } });
+  el.addEventListener('click', e => { if (e.target === el) { el.remove(); showLevelManager(); } });
+}
+
+function moveLevelOrder(name, dir) {
+  const lang = state.filter.lang; const levels = getLevelsForLang(lang);
+  const idx = levels.indexOf(name); if (idx < 0) return;
+  const newIdx = idx + dir; if (newIdx < 0 || newIdx >= levels.length) return;
+  [levels[idx], levels[newIdx]] = [levels[newIdx], levels[idx]];
+  setLevelsForLang(lang, levels); closeModal(); showLevelManager();
+}
+
+function deleteLevelPrompt(name) {
+  closeModal();
+  const lang = state.filter.lang;
+  const vCount = state.vocabulary.filter(v => v.lang === lang && v.level === name).length;
+  const gCount = state.grammar.filter(g => g.lang === lang && g.level === name).length;
+  const total = vCount + gCount;
+  showConfirm(`Delete level "${name}"?${total > 0 ? ` ${total} item${total>1?'s':''} will become unleveled.` : ''}`, () => {
+    const levels = getLevelsForLang(lang);
+    const idx = levels.indexOf(name); if (idx >= 0) levels.splice(idx, 1);
+    setLevelsForLang(lang, levels);
+    state.vocabulary.forEach(v => { if (v.lang === lang && v.level === name) { v.level = ''; syncManager.push(() => api.update('Vocabulary', v.id, v), 'del level'); } }); saveVocab();
+    state.grammar.forEach(g => { if (g.lang === lang && g.level === name) { g.level = ''; syncManager.push(() => api.update('Grammar', g.id, g), 'del level'); } }); saveGrammar();
+    if (state.filter.level === name) state.filter.level = null;
+    showToast('Level deleted', 'info'); showLevelManager(); renderCurrentView();
+  });
+}
+
+/* Batch Move Folder to Level */
+function showBatchMoveToLevel(folderName, type) {
+  const lang = state.filter.lang; const levels = getLevelsForLang(lang);
+  const currentLevel = state.filter.level;
+  const isVocab = type === 'vocab';
+  const pool = isVocab ? state.vocabulary.filter(v => v.lang === lang && v.category === folderName) : state.grammar.filter(g => g.lang === lang && g.category === folderName);
+  const currentLevelItems = currentLevel && currentLevel !== '__none' ? pool.filter(x => x.level === currentLevel) : (currentLevel === '__none' ? pool.filter(x => !x.level) : pool);
+  const itemCount = currentLevelItems.length;
+  const fromLabel = currentLevel ? (currentLevel === '__none' ? 'No Level' : currentLevel) : 'all levels';
+  let html = `<h2 style="font-size:18px"><i class="fas fa-layer-group" style="color:var(--accent)"></i> Move Folder to Level</h2>`;
+  html += `<p style="font-size:13px;color:var(--text-1);margin-bottom:14px;font-weight:600">Move all <b>${itemCount}</b> item${itemCount!==1?'s':''} in "<b>${esc(folderName)}</b>" (from ${esc(fromLabel)}) to a different level:</p>`;
+  html += `<ul class="move-folder-list">`;
+  html += `<li onclick="doBatchMoveToLevel('${esc(folderName)}','${type}','')"><i class="fas fa-layer-group" style="color:var(--text-2)"></i> No Level${(!currentLevel || currentLevel === '__none') ? '<span style="margin-left:auto;font-size:12px;opacity:0.6">current</span>' : ''}</li>`;
+  levels.forEach(lv => {
+    const isCurrent = currentLevel === lv;
+    html += `<li class="${isCurrent?'current':''}" onclick="doBatchMoveToLevel('${esc(folderName)}','${type}','${esc(lv)}')"><i class="fas fa-layer-group" style="color:var(--accent)"></i> ${esc(lv)}${isCurrent?'<span style="margin-left:auto;font-size:12px;opacity:0.6">current</span>':''}</li>`;
+  });
+  html += `</ul><div style="margin-top:12px"><button class="btn btn-secondary btn-block btn-sm" onclick="closeModal()">Cancel</button></div>`;
+  showModal(html);
+}
+
+function doBatchMoveToLevel(folderName, type, targetLevel) {
+  const lang = state.filter.lang; const isVocab = type === 'vocab';
+  const currentLevel = state.filter.level;
+  const arr = isVocab ? state.vocabulary : state.grammar;
+  let moved = 0;
+  arr.forEach(item => {
+    if (item.lang !== lang || item.category !== folderName) return;
+    if (currentLevel !== null) {
+      if (currentLevel === '__none' && item.level) return;
+      if (currentLevel !== '__none' && item.level !== currentLevel) return;
+    }
+    if (item.level === targetLevel) return;
+    item.level = targetLevel; moved++;
+    const tab = isVocab ? 'Vocabulary' : 'Grammar';
+    syncManager.push(() => api.update(tab, item.id, item), 'batch move level');
+  });
+  if (isVocab) saveVocab(); else saveGrammar();
+  closeModal(); showToast(moved + ' item' + (moved!==1?'s':'') + ' moved to ' + (targetLevel || 'No Level'), 'success'); renderCurrentView();
+}
 
 function showMoveToFolder(id, type) {
   const isVocab = type === 'vocab'; const item = isVocab ? state.vocabulary.find(v => v.id === id) : state.grammar.find(g => g.id === id); if (!item) return;
@@ -1355,16 +1491,17 @@ function _gramFolderListHTML(lang, sq) {
   if (lv !== null) { if (lv === '__none') pool = pool.filter(g => !g.level); else pool = pool.filter(g => g.level === lv); }
   if (sq) { const matches = pool.filter(g => g.pattern.toLowerCase().includes(sq) || g.explanation.toLowerCase().includes(sq) || (g.category||'').toLowerCase().includes(sq)).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')); if (matches.length === 0) return '<div class="empty-state"><div class="empty-icon">🔍</div><h3>No matches</h3></div>'; return `<div style="font-size:13px;color:var(--text-2);margin-bottom:8px;font-weight:600">${matches.length} result${matches.length!==1?'s':''}</div>` + matches.map((g,i)=>`<div class="item-card stagger" style="animation-delay:${Math.min(i*0.03,0.5)}s" onclick="showEditGrammarModal('${g.id}')"><div class="word" style="font-size:18px">${esc(g.pattern)}</div><div class="meaning" style="margin-top:6px">${esc(g.explanation).substring(0,100)}</div><div class="meta">${g.category?`<span class="search-folder-tag"><i class="fas fa-folder"></i> ${esc(g.category)}</span>`:''}</div></div>`).join(''); }
   const cats = getUsedCategories(lang, 'grammar'); const uncatCount = pool.filter(g => !g.category).length;
-  return `<div class="folder-list">${cats.map((c,i) => { const count = pool.filter(g => g.category === c).length; return `<div class="folder-row stagger" style="animation-delay:${Math.min(i*0.03,0.4)}s"><div class="folder-icon"><i class="fas fa-folder"></i></div><div class="folder-info" onclick="openFolder('${esc(c)}','grammar')"><div class="folder-name">${esc(c)}</div><div class="folder-count">${count} rule${count!==1?'s':''}</div></div><div class="folder-actions"><button class="move-up" onclick="moveFolder('${esc(c)}',-1,'grammar')" ${i===0?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-up"></i></button><button class="move-down" onclick="moveFolder('${esc(c)}',1,'grammar')" ${i===cats.length-1?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-down"></i></button><button class="edit-btn" onclick="showFolderOptionsPrompt('${esc(c)}','grammar')"><i class="fas fa-ellipsis-vertical"></i></button></div></div>`; }).join('')}${uncatCount > 0 ? `<div class="folder-row stagger"><div class="folder-icon"><i class="fas fa-folder-open" style="color:var(--text-2)"></i></div><div class="folder-info" onclick="openFolder('__uncat','grammar')"><div class="folder-name">Unfiled</div><div class="folder-count">${uncatCount} rule${uncatCount!==1?'s':''}</div></div></div>` : ''}<div class="folder-row add-folder stagger" onclick="showCreateFolderPrompt('grammar')"><div class="folder-icon"><i class="fas fa-folder-plus"></i></div><div class="add-label">New Folder</div></div></div>`;
+  const hasLevels = getLevelsForLang(lang).length > 0;
+  return `<div class="folder-list">${cats.map((c,i) => { const count = pool.filter(g => g.category === c).length; return `<div class="folder-row stagger" style="animation-delay:${Math.min(i*0.03,0.4)}s"><div class="folder-icon"><i class="fas fa-folder"></i></div><div class="folder-info" onclick="openFolder('${esc(c)}','grammar')"><div class="folder-name">${esc(c)}</div><div class="folder-count">${count} rule${count!==1?'s':''}</div></div><div class="folder-actions">${hasLevels?`<button title="Move folder to level" onclick="showBatchMoveToLevel('${esc(c)}','grammar')"><i class="fas fa-layer-group"></i></button>`:''}<button class="move-up" onclick="moveFolder('${esc(c)}',-1,'grammar')" ${i===0?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-up"></i></button><button class="move-down" onclick="moveFolder('${esc(c)}',1,'grammar')" ${i===cats.length-1?'style="opacity:0.2;pointer-events:none"':''}><i class="fas fa-chevron-down"></i></button><button class="edit-btn" onclick="showFolderOptionsPrompt('${esc(c)}','grammar')"><i class="fas fa-ellipsis-vertical"></i></button></div></div>`; }).join('')}${uncatCount > 0 ? `<div class="folder-row stagger"><div class="folder-icon"><i class="fas fa-folder-open" style="color:var(--text-2)"></i></div><div class="folder-info" onclick="openFolder('__uncat','grammar')"><div class="folder-name">Unfiled</div><div class="folder-count">${uncatCount} rule${uncatCount!==1?'s':''}</div></div></div>` : ''}<div class="folder-row add-folder stagger" onclick="showCreateFolderPrompt('grammar')"><div class="folder-icon"><i class="fas fa-folder-plus"></i></div><div class="add-label">New Folder</div></div></div>`;
 }
 
 function _gramItemListHTML(filtered, showFolder) { return filtered.length===0?'<div class="empty-state"><div class="empty-icon">📝</div><h3>No grammar here</h3></div>': filtered.map((g,i)=>`<div class="item-card stagger" style="animation-delay:${Math.min(i*0.03,0.5)}s" onclick="showEditGrammarModal('${g.id}')"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div class="word" style="font-size:18px;flex:1;min-width:0">${esc(g.pattern)}</div><button class="btn-move-folder" onclick="event.stopPropagation();showMoveToFolder('${g.id}','grammar')"><i class="fas fa-folder-arrow-down"></i></button></div><div class="meaning" style="margin-top:6px">${esc(g.explanation).substring(0,100)}</div><div class="meta">${showFolder?`<span class="search-folder-tag"><i class="fas fa-folder"></i> ${esc(g.category||'Unfiled')}</span>`:''}</div></div>`).join(''); }
 
 function renderGrammar(searchOnly) {
-  const el = document.getElementById('view-grammar'); const lang = state.filter.lang; const langDef = LANGS[lang] || {}; const levels = langDef.levels || [];
-  if (state.filter.level === null && levels.length > 0) { const sq = state.filter.search ? state.filter.search.toLowerCase() : ''; if (searchOnly) { const t = document.getElementById('grammar-level-results'); if (t) { t.innerHTML = _gramLevelListHTML(lang, levels, sq); return; } } el.innerHTML = `<div class="section-head"><h2>Grammar</h2></div><div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search all grammar..." value="${esc(state.filter.search)}" oninput="setGramFolderSearch(this.value)"></div><div id="grammar-level-results">${_gramLevelListHTML(lang, levels, sq)}</div><button class="fab" onclick="showAddGrammarModal()"><i class="fas fa-plus"></i></button>`; return; }
+  const el = document.getElementById('view-grammar'); const lang = state.filter.lang; const levels = getLevelsForLang(lang);
+  if (state.filter.level === null && levels.length > 0) { const sq = state.filter.search ? state.filter.search.toLowerCase() : ''; if (searchOnly) { const t = document.getElementById('grammar-level-results'); if (t) { t.innerHTML = _gramLevelListHTML(lang, levels, sq); return; } } el.innerHTML = `<div class="section-head"><h2>Grammar</h2><button class="btn btn-ghost btn-sm" onclick="showLevelManager()" title="Manage Levels"><i class="fas fa-layer-group"></i></button></div><div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search all grammar..." value="${esc(state.filter.search)}" oninput="setGramFolderSearch(this.value)"></div><div id="grammar-level-results">${_gramLevelListHTML(lang, levels, sq)}</div><button class="fab" onclick="showAddGrammarModal()"><i class="fas fa-plus"></i></button>`; return; }
   const folder = state.filter.openFolder;
-  if (folder === null) { const sq = state.filter.search ? state.filter.search.toLowerCase() : ''; if (searchOnly) { const t = document.getElementById('grammar-folder-results'); if (t) { t.innerHTML = _gramFolderListHTML(lang, sq); return; } } el.innerHTML = `${levels.length > 0 ? `<button class="folder-back" onclick="closeLevel()"><i class="fas fa-arrow-left"></i> All Levels</button>` : ''}<div class="section-head"><h2>Grammar ${state.filter.level ? `<span class="level-badge">${esc(state.filter.level==='__none'?'No Level':state.filter.level)}</span>` : ''}</h2></div><div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search all grammar..." value="${esc(state.filter.search)}" oninput="setGramFolderSearch(this.value)"></div><div id="grammar-folder-results">${_gramFolderListHTML(lang, sq)}</div><button class="fab" onclick="showAddGrammarModal()"><i class="fas fa-plus"></i></button>`; }
+  if (folder === null) { const sq = state.filter.search ? state.filter.search.toLowerCase() : ''; if (searchOnly) { const t = document.getElementById('grammar-folder-results'); if (t) { t.innerHTML = _gramFolderListHTML(lang, sq); return; } } el.innerHTML = `${levels.length > 0 ? `<button class="folder-back" onclick="closeLevel()"><i class="fas fa-arrow-left"></i> All Levels</button>` : ''}<div class="section-head"><h2>Grammar ${state.filter.level ? `<span class="level-badge">${esc(state.filter.level==='__none'?'No Level':state.filter.level)}</span>` : ''}</h2><button class="btn btn-ghost btn-sm" onclick="showLevelManager()" title="Manage Levels"><i class="fas fa-layer-group"></i></button></div><div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search all grammar..." value="${esc(state.filter.search)}" oninput="setGramFolderSearch(this.value)"></div><div id="grammar-folder-results">${_gramFolderListHTML(lang, sq)}</div><button class="fab" onclick="showAddGrammarModal()"><i class="fas fa-plus"></i></button>`; }
   else { const folderName = folder === '__uncat' ? 'Unfiled' : folder; const filtered = getFilteredGrammar(); const showFolder = !!state.filter.search; if (searchOnly) { const t = document.getElementById('grammar-list'); const c = document.getElementById('grammar-count'); if (t) { t.innerHTML = _gramItemListHTML(filtered, showFolder); if(c) c.textContent = '('+filtered.length+')'; return; } } el.innerHTML = `<button class="folder-back" onclick="closeFolder()"><i class="fas fa-arrow-left"></i> All Folders</button><div class="section-head"><h2><i class="fas fa-folder-open" style="color:var(--accent);font-size:18px"></i> ${esc(folderName)} <span id="grammar-count" style="color:var(--text-2);font-weight:400;font-size:16px">(${filtered.length})</span></h2></div><div class="search-wrap"><i class="fas fa-search"></i><input type="search" placeholder="Search all grammar..." value="${esc(state.filter.search)}" oninput="setGramSearch(this.value)"></div><div id="grammar-list">${_gramItemListHTML(filtered, showFolder)}</div><button class="fab" onclick="showAddGrammarModal()"><i class="fas fa-plus"></i></button>`; }
 }
 
@@ -1456,7 +1593,7 @@ function renderQuizResults(el) { const q = state.quiz; const correct = q.results
 function renderSettings() { const el = document.getElementById('view-settings'); const langs = state.config.languages||[]; el.innerHTML = `<h2 style="margin-bottom:20px">Settings</h2><div class="settings-section"><h3><i class="fas fa-cloud"></i> Cloud Sync</h3><div style="display:flex;align-items:center;gap:10px;padding:12px;background:var(--success-bg);border:2px solid var(--success);border-radius:var(--radius-sm)"><i class="fas fa-circle-check" style="color:var(--success);font-size:18px"></i><div><b style="font-size:14px;color:var(--success)">Connected to Google Sheets</b><p style="font-size:12px;color:var(--text-1);margin-top:2px">Auto-sync enabled.</p></div></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn btn-secondary btn-sm" onclick="syncManager.pull().then(()=>renderSettings())"><i class="fas fa-cloud-arrow-down"></i> Pull</button><button class="btn btn-primary btn-sm" onclick="syncManager.pushAll().then(()=>renderSettings())"><i class="fas fa-cloud-arrow-up"></i> Sync & Clean</button></div></div><div class="settings-section"><h3><i class="fas fa-globe"></i> Languages</h3><div id="lang-list" style="margin-bottom:10px">${langs.map(l=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 0"><span style="font-size:15px">${langLabel(l)}</span><button class="btn btn-ghost btn-sm" onclick="removeLang('${l}')" style="margin-left:auto;color:var(--error);font-size:12px"><i class="fas fa-times"></i></button></div>`).join('')}</div><button class="btn btn-secondary btn-sm" onclick="showAddLanguagePrompt()"><i class="fas fa-plus"></i> Add Language</button></div><div class="settings-section"><h3><i class="fas fa-download"></i> Data</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-secondary btn-sm" onclick="exportData()"><i class="fas fa-download"></i> Export</button><button class="btn btn-secondary btn-sm" onclick="showImportPrompt()"><i class="fas fa-upload"></i> Import</button><button class="btn btn-danger btn-sm" onclick="clearAllData()"><i class="fas fa-trash"></i> Clear All</button></div></div>`; }
 
 function showAddLanguagePrompt() { const available = Object.keys(LANGS).filter(l=>!(state.config.languages||[]).includes(l)); showModal(`<h2>Add Language</h2><div class="form-group"><label>Select Language</label><select id="new-lang-select" onchange="document.getElementById('custom-lang-fields').style.display=this.value==='_custom'?'block':'none'">${available.map(l=>`<option value="${l}">${langLabel(l)}</option>`).join('')}<option value="_custom">✏️ Custom...</option></select></div><div id="custom-lang-fields" style="display:${available.length>0?'none':'block'}"><div class="form-group"><label>Code</label><input id="custom-lang-code" placeholder="e.g. yue"></div><div class="form-group"><label>Name</label><input id="custom-lang-name" placeholder="e.g. Cantonese"></div><div class="form-group"><label>Emoji</label><input id="custom-lang-emoji" placeholder="🇭🇰"></div></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="addLanguage()">Add</button></div>`); }
-function addLanguage() { const sel = document.getElementById('new-lang-select').value; let lang; if (sel === '_custom') { const code = (document.getElementById('custom-lang-code').value||'').trim().toLowerCase(); const name = (document.getElementById('custom-lang-name').value||'').trim(); const emoji = (document.getElementById('custom-lang-emoji').value||'').trim() || '🌐'; if (!code||!name) { showToast('Enter code and name','error'); return; } lang = code; if (!LANGS[lang]) LANGS[lang] = {emoji,name,label:name,fields:[],levels:[]}; if (!state.config.customLangs) state.config.customLangs = {}; state.config.customLangs[lang] = {emoji,name,label:name,fields:[],levels:[]}; } else { lang = sel; } if(!state.config.languages) state.config.languages = []; if(!state.config.languages.includes(lang)) state.config.languages.push(lang); saveConfig(); closeModal(); showToast(langLabel(lang)+' added','success'); renderCurrentView(); }
+function addLanguage() { const sel = document.getElementById('new-lang-select').value; let lang; if (sel === '_custom') { const code = (document.getElementById('custom-lang-code').value||'').trim().toLowerCase(); const name = (document.getElementById('custom-lang-name').value||'').trim(); const emoji = (document.getElementById('custom-lang-emoji').value||'').trim() || '🌐'; if (!code||!name) { showToast('Enter code and name','error'); return; } lang = code; if (!LANGS[lang]) LANGS[lang] = {emoji,name,label:name,fields:[],defaultLevels:[]}; if (!state.config.customLangs) state.config.customLangs = {}; state.config.customLangs[lang] = {emoji,name,label:name,fields:[],defaultLevels:[]}; } else { lang = sel; } if(!state.config.languages) state.config.languages = []; if(!state.config.languages.includes(lang)) state.config.languages.push(lang); saveConfig(); closeModal(); showToast(langLabel(lang)+' added','success'); renderCurrentView(); }
 function removeLang(lang) { state.config.languages = (state.config.languages||[]).filter(l=>l!==lang); if(state.filter.lang===lang) state.filter.lang = ''; saveConfig(); renderLangBar(); renderSettings(); }
 function exportData() { const data = {vocabulary:state.vocabulary,grammar:state.grammar,config:state.config,exportedAt:new Date().toISOString()}; const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'lexivault-'+todayStr()+'.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); showToast('Exported','success'); }
 function showImportPrompt() { showModal(`<h2>Import Data</h2><div class="form-group"><input type="file" id="import-file" accept=".json"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="doImport()">Import</button></div>`); }
